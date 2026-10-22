@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 from telethon import functions, types
-from telethon.errors import RPCError
+from telethon.errors import BotResponseTimeoutError, RPCError
 
 from . import storage
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, PANEL_PASSWORD, TMP_DIR
@@ -399,6 +399,39 @@ async def forward_message(aid: int, cid: int, mid: int, body: ForwardIn):
     msg = await client.forward_messages(await manager.entity(aid, body.to_chat_id), mid,
                                         await manager.entity(aid, cid))
     return message_dict(aid, msg)
+
+
+class ClickIn(BaseModel):
+    row: int
+    col: int
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/messages/{mid}/click", dependencies=A)
+async def click_button(aid: int, cid: int, mid: int, body: ClickIn):
+    """Нажатие inline-кнопки бота. Ссылки открывает браузер сам, сюда приходят только callback и игры."""
+    client = manager.client(aid)
+    entity = await manager.entity(aid, cid)
+    msg = await client.get_messages(entity, ids=mid)
+    if msg is None or not isinstance(msg.reply_markup, types.ReplyInlineMarkup):
+        raise HTTPException(404, "У сообщения больше нет кнопок")
+    try:
+        button = msg.reply_markup.rows[body.row].buttons[body.col]
+    except IndexError:
+        raise HTTPException(404, "Кнопка не найдена — возможно, бот обновил сообщение")
+    kind = button.type
+    if isinstance(kind, types.InlineButtonTypeCallback):
+        if kind.requires_password:
+            raise HTTPException(400, "Эта кнопка требует облачный пароль — пока не поддерживается")
+        request = functions.messages.GetBotCallbackAnswerRequest(peer=entity, msg_id=mid, data=kind.data)
+    elif isinstance(kind, types.InlineButtonTypeGame):
+        request = functions.messages.GetBotCallbackAnswerRequest(peer=entity, msg_id=mid, game=True)
+    else:
+        raise HTTPException(400, "Эта кнопка не нажимается из панели")
+    try:
+        res = await client(request)
+    except BotResponseTimeoutError:
+        return {"message": "Бот не ответил вовремя", "alert": False, "url": ""}
+    return {"message": res.message or "", "alert": bool(res.alert), "url": res.url or ""}
 
 
 @app.post("/api/accounts/{aid}/chats/{cid}/read", dependencies=A)

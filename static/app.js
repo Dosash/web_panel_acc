@@ -86,6 +86,59 @@ function esc(s) {
 function linkify(text) {
   return esc(text).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 }
+// Только http(s), tg:, mailto: и tel: — ссылки вида javascript: из сообщений не пропускаем
+function safeUrl(raw) {
+  const s = String(raw || "").trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    return ["http:", "https:", "tg:", "mailto:", "tel:"].includes(u.protocol) ? u.href : "";
+  } catch { return ""; }
+}
+function extLink(url, inner) {
+  const href = safeUrl(url);
+  return href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>` : inner;
+}
+function wrapEntity(e, inner, raw) {
+  switch (e.type) {
+    case "bold": return `<b>${inner}</b>`;
+    case "italic": return `<i>${inner}</i>`;
+    case "underline": return `<u>${inner}</u>`;
+    case "strike": return `<s>${inner}</s>`;
+    case "code": return `<code>${inner}</code>`;
+    case "pre": return `<pre><code>${inner}</code></pre>`;
+    case "quote": return `<blockquote>${inner}</blockquote>`;
+    case "spoiler": return `<span class="spoiler" title="Спойлер — нажмите, чтобы показать">${inner}</span>`;
+    case "link": return extLink(e.url, inner);
+    case "url": return extLink(raw, inner);
+    case "email": return `<a href="mailto:${esc(raw)}">${inner}</a>`;
+    case "phone": return `<a href="tel:${esc(raw.replace(/[^\d+]/g, ""))}">${inner}</a>`;
+    case "mention": return extLink(`https://t.me/${raw.replace(/^@/, "")}`, inner);
+    case "mention_name": case "hashtag": case "command": return `<span class="tag">${inner}</span>`;
+    default: return inner;
+  }
+}
+// Текст с форматированием Telegram. Сущности вкладываются деревом, чтобы цитата с жирным словом
+// внутри осталась одной цитатой, а не развалилась на куски
+function renderText(text, entities) {
+  if (!text) return "";
+  if (!entities?.length) return linkify(text);
+  const list = entities.map(e => ({ ...e, end: e.offset + e.length })).sort((a, b) => a.offset - b.offset || b.end - a.end);
+  let i = 0;
+  function build(start, end) {
+    let out = "", pos = start;
+    while (i < list.length && list[i].offset < end) {
+      const e = list[i++];
+      const s = Math.max(e.offset, pos), en = Math.min(e.end, end);
+      if (s >= en) continue;
+      out += esc(text.slice(pos, s));
+      out += wrapEntity(e, build(s, en), text.slice(e.offset, e.end));
+      pos = en;
+    }
+    return out + esc(text.slice(pos, end));
+  }
+  return build(0, text.length);
+}
 function initials(name) {
   const parts = String(name || "?").replace(/[^\p{L}\p{N}\s]/gu, "").trim().split(/\s+/);
   return ((parts[0]?.[0] || "?") + (parts[1]?.[0] || "")).toUpperCase();
@@ -389,6 +442,31 @@ function mediaHtml(m) {
     default: return `<div class="misc muted">${esc(mediaLabel(md.type))}</div>`;
   }
 }
+const BUTTON_ICON = { url: "link", webview: "link", copy: "copy", switch: "reply", profile: "user" };
+function buttonsHtml(m) {
+  if (!m.buttons?.length) return "";
+  return `<div class="kb">${m.buttons.map((row, r) => `<div class="kb-row">${row.map((b, c) => {
+    const ic = BUTTON_ICON[b.kind] ? `<span class="kb-ic">${icon(BUTTON_ICON[b.kind])}</span>` : "";
+    const href = (b.kind === "url" || b.kind === "webview") && safeUrl(b.url);
+    return href
+      ? `<a class="kb-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(b.url)}">${esc(b.text)}${ic}</a>`
+      : `<button class="kb-btn" data-row="${r}" data-col="${c}"${b.kind === "disabled" ? " disabled" : ""}>${esc(b.text)}${ic}</button>`;
+  }).join("")}</div>`).join("")}</div>`;
+}
+async function pressButton(m, row, col, btnEl) {
+  const b = m.buttons?.[row]?.[col];
+  if (!b) return;
+  if (b.kind === "copy") { await navigator.clipboard.writeText(b.copy || ""); return toast("Скопировано"); }
+  if (b.kind === "switch") return toast("Inline-режим бота пока не поддерживается", true);
+  if (b.kind === "profile" || b.kind === "buy" || b.kind === "other") return toast("Эта кнопка работает только в приложении Telegram", true);
+  btnEl.disabled = true; btnEl.classList.add("loading");
+  try {
+    const res = await api(`${chatPath(m.account_id, m.chat_id)}/messages/${m.id}/click`, { method: "POST", body: { row, col } });
+    if (res.url) window.open(safeUrl(res.url), "_blank", "noopener");
+    if (res.message) res.alert ? alert(res.message) : toast(res.message);
+  } catch (e) { toast(e.message, true); }
+  btnEl.disabled = false; btnEl.classList.remove("loading");
+}
 function sameGroup(a, b) {
   return a && b && !a.action && !b.action && a.out === b.out && a.sender_id === b.sender_id
     && Math.abs(b.date - a.date) < GROUP_GAP && dayLabel(a.date) === dayLabel(b.date);
@@ -409,7 +487,10 @@ function messageEl(m, i, isNew = false) {
   el.dataset.id = m.id;
   const showSender = first && !m.out && S.current && S.current.type === "group";
   const reply = m.reply_to ? S.messages.find(x => x.id === m.reply_to) : null;
-  const web = m.media?.type === "webpage" && m.media.title ? `<div class="webpage"><b>${esc(m.media.title)}</b></div>` : "";
+  const wp = m.media?.type === "webpage" ? m.media : null;
+  const web = wp && (wp.title || wp.description) ? `<a class="webpage" href="${esc(safeUrl(wp.url))}" target="_blank" rel="noopener noreferrer">
+      ${wp.site ? `<span class="wp-site">${esc(wp.site)}</span>` : ""}${wp.title ? `<b>${esc(wp.title)}</b>` : ""}${wp.description ? `<span class="wp-desc">${esc(wp.description)}</span>` : ""}</a>` : "";
+  const spoiler = m.media?.spoiler;
   const meta = `${m.views != null ? `${icon("eye")}${m.views.toLocaleString("ru")} · ` : ""}${m.edit_date ? "изм. " : ""}${m.pinned ? icon("pin") : ""}${fmtClock(m.date)}`;
   el.innerHTML = `
     <div class="actions">
@@ -421,12 +502,19 @@ function messageEl(m, i, isNew = false) {
     </div>
     <div class="bubble">${showSender ? `<div class="sender" style="--sc:${peerColor(m.sender_id)}">${esc(m.sender_name)}</div>` : ""}${
       m.reply_to ? `<div class="quote" data-goto="${m.reply_to}">${esc(reply ? (reply.text || mediaLabel(reply.media?.type)).slice(0, 90) : "Ответ на сообщение")}</div>` : ""
-    }<div class="media">${mediaHtml(m)}</div>${linkify(m.text)}${web}<span class="meta">${meta}</span></div>`;
+    }<div class="media${spoiler ? " spoiler-media" : ""}">${mediaHtml(m)}${spoiler ? `<span class="spoiler-cover">${icon("eye")}Спойлер</span>` : ""}</div>${
+      renderText(m.text, m.entities)}${web}<span class="meta">${meta}</span></div>${buttonsHtml(m)}`;
   el.querySelector(".actions").onclick = e => { const b = e.target.closest("button"); if (b) msgAction(b.dataset.act, m); };
   el.querySelector(".quote")?.addEventListener("click", () => flashMessage(m.reply_to));
-  el.addEventListener("click", e => {
-    if (matchMedia("(max-width: 860px)").matches && !e.target.closest("a, button, video, audio")) el.classList.toggle("show-actions");
+  el.querySelector(".kb")?.addEventListener("click", e => {
+    const b = e.target.closest("button.kb-btn"); if (b) pressButton(m, +b.dataset.row, +b.dataset.col, b);
   });
+  el.addEventListener("click", e => {
+    // Спойлер скрывает фото/текст до первого нажатия; ссылка под ним при этом не открывается
+    const cover = e.target.closest(".spoiler-media:not(.revealed), .spoiler:not(.revealed)");
+    if (cover) { e.preventDefault(); e.stopPropagation(); cover.classList.add("revealed"); return; }
+    if (matchMedia("(max-width: 860px)").matches && !e.target.closest("a, button, video, audio")) el.classList.toggle("show-actions");
+  }, true);
   return el;
 }
 function dayLabel(ts) {

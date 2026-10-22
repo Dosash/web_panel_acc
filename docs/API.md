@@ -66,11 +66,19 @@ pinned, archived, muted, date, last_text, last_media, last_action, last_out, is_
 | DELETE | `/api/accounts/{aid}/chats/{cid}/messages/{mid}?revoke=true` | Удалить (у всех / только у себя) |
 | POST | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/pin?unpin=bool` | Закрепить/открепить |
 | POST | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/forward` | `{to_chat_id}` — переслать в другой чат того же аккаунта |
+| POST | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/click` | `{row, col}` — нажать callback-кнопку или кнопку игры → `{message, alert, url}`. Кнопки-ссылки открывает браузер, сюда их не шлют |
 | GET | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/media?thumb=bool` | Файл медиа (кэшируется на диске) |
 
-Объект сообщения: `account_id, chat_id, id, date, edit_date, out, text, sender_id, sender_name,
-reply_to, media, action, views, pinned`.
-`media`: `{type: photo|video|gif|round|voice|audio|file|sticker|webpage|poll|geo|contact, name?, size?, mime?, w?, h?, url?, title?}`.
+Объект сообщения: `account_id, chat_id, id, date, edit_date, out, text, entities, buttons, sender_id,
+sender_name, reply_to, media, action, views, pinned`.
+
+- `media`: `{type: photo|video|gif|round|voice|audio|file|sticker|webpage|poll|geo|contact, name?, size?, mime?, w?, h?, spoiler?}`;
+  для `webpage` — `{url, site, title, description}`.
+- `entities` — форматирование текста: `{type, offset, length, url?, language?, user_id?}`, где `type` —
+  `bold|italic|underline|strike|code|pre|spoiler|quote|link|url|email|phone|mention|mention_name|hashtag|command`.
+  Смещения в UTF-16 (совпадают с индексами строк JavaScript).
+- `buttons` — inline-кнопки: массив рядов, кнопка `{text, kind, url?, copy?}`, где `kind` —
+  `url|webview|callback|password|game|switch|copy|profile|buy|disabled|other`. `null`, если кнопок нет.
 
 ## WebSocket `/ws`
 

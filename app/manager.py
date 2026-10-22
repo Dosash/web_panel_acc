@@ -49,10 +49,12 @@ def media_info(msg) -> dict | None:
     m = msg.media
     if m is None:
         return None
+    spoiler = bool(getattr(m, "spoiler", False))
     if isinstance(m, types.MessageMediaPhoto):
         sizes = [s for s in getattr(m.photo, "sizes", []) if getattr(s, "w", None)]
         big = max(sizes, key=lambda s: s.w * s.h, default=None)
-        return {"type": "photo", "w": big.w if big else None, "h": big.h if big else None}
+        return {"type": "photo", "w": big.w if big else None, "h": big.h if big else None,
+                "spoiler": spoiler}
     if isinstance(m, types.MessageMediaDocument) and msg.document:
         doc = msg.document
         kind = "file"
@@ -73,11 +75,12 @@ def media_info(msg) -> dict | None:
         dims = next((a for a in doc.attributes if isinstance(
             a, (types.DocumentAttributeVideo, types.DocumentAttributeImageSize))), None)
         return {"type": kind, "name": name, "size": doc.size, "mime": doc.mime_type,
-                "w": getattr(dims, "w", None), "h": getattr(dims, "h", None)}
+                "w": getattr(dims, "w", None), "h": getattr(dims, "h", None), "spoiler": spoiler}
     if isinstance(m, types.MessageMediaWebPage):
         page = m.webpage
         if isinstance(page, types.WebPage):
-            return {"type": "webpage", "url": page.url, "title": page.title or page.site_name or ""}
+            return {"type": "webpage", "url": page.url, "site": page.site_name or "",
+                    "title": page.title or "", "description": (page.description or "")[:300]}
         return None
     if isinstance(m, types.MessageMediaGeo):
         return {"type": "geo"}
@@ -110,6 +113,68 @@ def action_text(msg) -> str:
     return type(a).__name__.replace("MessageAction", "")
 
 
+_ENTITY_TYPES = {
+    types.MessageEntityBold: "bold", types.MessageEntityItalic: "italic",
+    types.MessageEntityUnderline: "underline", types.MessageEntityStrike: "strike",
+    types.MessageEntityCode: "code", types.MessageEntityPre: "pre",
+    types.MessageEntitySpoiler: "spoiler", types.MessageEntityBlockquote: "quote",
+    types.MessageEntityTextUrl: "link", types.MessageEntityUrl: "url",
+    types.MessageEntityEmail: "email", types.MessageEntityPhone: "phone",
+    types.MessageEntityMention: "mention", types.MessageEntityMentionName: "mention_name",
+    types.MessageEntityHashtag: "hashtag", types.MessageEntityCashtag: "hashtag",
+    types.MessageEntityBotCommand: "command",
+}
+
+
+def entities_list(msg) -> list[dict]:
+    """Форматирование текста. Смещения в UTF-16 — так же считает длину строки JavaScript."""
+    result = []
+    for e in msg.entities or []:
+        kind = _ENTITY_TYPES.get(type(e))
+        if kind is None:
+            continue
+        item = {"type": kind, "offset": e.offset, "length": e.length}
+        if kind == "link":
+            item["url"] = e.url
+        elif kind == "pre":
+            item["language"] = e.language or ""
+        elif kind == "mention_name":
+            item["user_id"] = e.user_id
+        result.append(item)
+    return result
+
+
+_BUTTON_KINDS = {
+    types.InlineButtonTypeUrl: "url", types.InlineButtonTypeUrlAuth: "url",
+    types.InlineButtonTypeWebView: "webview", types.InlineButtonTypeCallback: "callback",
+    types.InlineButtonTypeGame: "game", types.InlineButtonTypeSwitchInline: "switch",
+    types.InlineButtonTypeCopy: "copy", types.InlineButtonTypeUserProfile: "profile",
+    types.InlineButtonTypeBuy: "buy", types.InlineButtonTypeDisabled: "disabled",
+}
+
+
+def buttons_list(msg) -> list[list[dict]] | None:
+    """Inline-кнопки под сообщением (ссылки, кнопки ботов)."""
+    markup = msg.reply_markup
+    if not isinstance(markup, types.ReplyInlineMarkup):
+        return None
+    rows = []
+    for row in markup.rows:
+        out = []
+        for b in row.buttons:
+            t = b.type
+            item = {"text": b.text, "kind": _BUTTON_KINDS.get(type(t), "other")}
+            if getattr(t, "url", None):
+                item["url"] = t.url
+            if isinstance(t, types.InlineButtonTypeCopy):
+                item["copy"] = t.copy_text
+            if isinstance(t, types.InlineButtonTypeCallback) and t.requires_password:
+                item["kind"] = "password"
+            out.append(item)
+        rows.append(out)
+    return rows or None
+
+
 def message_dict(account_id: int, msg, sender=None) -> dict:
     sender = sender or msg.sender
     return {
@@ -120,6 +185,8 @@ def message_dict(account_id: int, msg, sender=None) -> dict:
         "edit_date": msg.edit_date.timestamp() if msg.edit_date else None,
         "out": bool(msg.out),
         "text": msg.message or "",
+        "entities": entities_list(msg),
+        "buttons": buttons_list(msg),
         "sender_id": msg.sender_id,
         "sender_name": display_name(sender),
         "reply_to": msg.reply_to.reply_to_msg_id if msg.reply_to else None,

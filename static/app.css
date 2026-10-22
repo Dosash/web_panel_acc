@@ -338,8 +338,64 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .msg .file .ico { width: 42px; height: 42px; border-radius: 12px; background: var(--grad); display: grid; place-items: center; color: #fff; flex: none; }
 .msg.out .file .ico { background: rgb(255 255 255 / .2); }
 .msg .file b { display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg .webpage { border-left: 3px solid var(--accent); padding: 3px 9px; margin-top: 6px; font-size: 13px; border-radius: 6px; background: var(--accent-soft); }
-.msg.out .webpage { border-left-color: #fff; background: rgb(255 255 255 / .14); }
+.msg .webpage {
+  display: grid; gap: 2px; border-left: 3px solid var(--accent); padding: 6px 10px; margin-top: 6px; font-size: 13px;
+  border-radius: 8px; background: var(--accent-soft); color: inherit; text-decoration: none; white-space: normal;
+}
+.msg .webpage:hover { text-decoration: none; filter: brightness(1.08); }
+.msg .webpage .wp-site { color: var(--accent); font-weight: 600; font-size: 12.5px; }
+.msg .webpage .wp-desc { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.msg.out .webpage { border-left-color: #fff; background: rgb(255 255 255 / .14); color: #fff; text-decoration: none; }
+.msg.out .webpage .wp-site, .msg.out .webpage .wp-desc { color: rgb(255 255 255 / .85); }
+
+/* форматирование текста */
+.bubble code { font: 13px/1.4 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; background: rgb(127 127 127 / .16); padding: 1px 5px; border-radius: 5px; }
+.bubble pre { margin: 4px 0; padding: 8px 10px; border-radius: 10px; background: rgb(0 0 0 / .22); overflow-x: auto; white-space: pre; }
+.bubble pre code { background: none; padding: 0; }
+.bubble blockquote { margin: 4px 0; padding: 4px 10px; border-left: 3px solid var(--accent); border-radius: 6px; background: var(--accent-soft); }
+.msg.out .bubble blockquote { border-left-color: #fff; background: rgb(255 255 255 / .14); }
+.bubble .tag { color: var(--accent); }
+.msg.out .bubble .tag { color: #fff; font-weight: 600; }
+.spoiler {
+  border-radius: 4px; cursor: pointer; color: transparent; transition: color .2s, background .2s;
+  background: repeating-linear-gradient(135deg, rgb(127 127 127 / .45) 0 2px, rgb(127 127 127 / .25) 2px 4px);
+}
+.spoiler * { color: transparent !important; }
+.spoiler.revealed { color: inherit; background: rgb(127 127 127 / .12); cursor: text; }
+.spoiler.revealed * { color: inherit !important; }
+
+/* фото/видео под спойлером */
+.msg .media.spoiler-media { position: relative; overflow: hidden; border-radius: 13px; cursor: pointer; }
+.spoiler-media:not(.revealed) img, .spoiler-media:not(.revealed) video { filter: blur(28px) saturate(1.2); transform: scale(1.12); }
+.spoiler-cover {
+  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px;
+  color: #fff; font-weight: 600; font-size: 13px; background: rgb(0 0 0 / .25); text-shadow: 0 1px 4px rgb(0 0 0 / .5);
+}
+.spoiler-cover svg.i { width: 26px; height: 26px; }
+.spoiler-media.revealed .spoiler-cover { display: none; }
+.spoiler-media img, .spoiler-media video { transition: filter .35s ease, transform .35s ease; }
+
+/* inline-кнопки под постом */
+.kb { display: grid; gap: 4px; margin-top: 4px; }
+.kb-row { display: flex; gap: 4px; }
+.kb-btn {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; position: relative;
+  padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer;
+  background: color-mix(in srgb, var(--bubble-in) 82%, transparent); backdrop-filter: blur(10px);
+  color: var(--text); font-weight: 600; font-size: 13.5px; text-decoration: none; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s, transform .1s;
+}
+.kb-btn:hover { background: var(--surface-3); text-decoration: none; }
+.kb-btn:active { transform: scale(.98); }
+.kb-btn:disabled { opacity: .55; cursor: default; }
+.kb-btn.loading { color: transparent; }
+.kb-btn.loading::after {
+  content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--muted); border-top-color: transparent; animation: spin .7s linear infinite;
+}
+.kb-ic { color: var(--muted); display: inline-grid; }
+.kb-ic svg.i { width: 14px; height: 14px; }
+.msg:not(.out) .kb-row:last-child .kb-btn:first-child { border-bottom-left-radius: 12px; }
 .msg .misc { display: flex; gap: 8px; align-items: center; padding: 2px 4px; }
 
 .msg .actions {
@@ -483,6 +539,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
 @keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
