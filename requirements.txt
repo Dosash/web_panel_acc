@@ -1,0 +1,9 @@
+telethon==1.45.0
+opentele==1.15.1
+fastapi==0.161.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+cryptography==50.0.2
+itsdangerous==2.2.0
+python-dotenv==1.2.4
+python-socks[asyncio]==3.1.1

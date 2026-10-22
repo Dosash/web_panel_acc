@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>TG Panel</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%234f8cff'/><stop offset='1' stop-color='%2322c1ee'/></linearGradient></defs><rect width='32' height='32' rx='9' fill='url(%23g)'/><path d='M7 15.5 24 9l-3 15-5-4-3 3v-5l9-7-11 6z' fill='white'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <!-- Вход -->
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand-mark lg" data-icon="plane"></div>
+      <h1>TG Panel</h1>
+      <p class="muted">Все Telegram-аккаунты в одном окне</p>
+      <input id="login-password" type="password" placeholder="Пароль панели" autocomplete="current-password" required>
+      <button class="btn primary block" type="submit">Войти</button>
+      <div id="login-error" class="error"></div>
+    </form>
+  </section>
+
+  <!-- Панель -->
+  <main id="app" class="app" hidden>
+    <nav class="rail">
+      <div class="brand-mark" data-icon="plane" title="TG Panel"></div>
+      <button class="rail-item all active" data-account="" data-tip="Все аккаунты"><span data-icon="layers"></span></button>
+      <div class="rail-sep"></div>
+      <div id="rail-accounts" class="rail-accounts"></div>
+      <button id="add-account" class="rail-item add" data-tip="Добавить аккаунт"><span data-icon="plus"></span></button>
+      <div class="rail-spacer"></div>
+      <button id="toggle-ghost" class="rail-tool" data-tip="Режим невидимки"></button>
+      <button id="toggle-theme" class="rail-tool" data-tip="Сменить тему"></button>
+      <button id="logout" class="rail-tool" data-tip="Выйти из панели"><span data-icon="logout"></span></button>
+    </nav>
+
+    <aside class="sidebar">
+      <header class="sidebar-head">
+        <div class="scope">
+          <div class="scope-text">
+            <div id="scope-title" class="scope-title">Все аккаунты</div>
+            <div id="scope-sub" class="scope-sub muted"></div>
+          </div>
+          <button id="new-chat" class="icon-btn" title="Найти человека или чат"><span data-icon="edit"></span></button>
+          <button id="account-menu" class="icon-btn" title="Действия аккаунта" hidden><span data-icon="more"></span></button>
+        </div>
+        <label class="search">
+          <span data-icon="search"></span>
+          <input id="dialog-filter" type="search" placeholder="Поиск по чатам">
+        </label>
+        <div class="segmented" role="tablist">
+          <button class="seg active" data-folder="main">Чаты</button>
+          <button class="seg" data-folder="unread">Непрочитанные</button>
+          <button class="seg" data-folder="archive">Архив</button>
+        </div>
+      </header>
+      <div id="dialog-list" class="dialog-list"></div>
+    </aside>
+
+    <section id="chat" class="chat empty">
+      <div class="chat-placeholder">
+        <div class="placeholder-art"><span data-icon="msg"></span></div>
+        <h2>Выберите чат</h2>
+        <p class="muted">Слева собраны диалоги всех подключённых аккаунтов.<br>Новый аккаунт добавляется кнопкой <b>+</b> из папки tdata.</p>
+      </div>
+      <header class="chat-head">
+        <button id="chat-back" class="icon-btn back" title="Назад"><span data-icon="back"></span></button>
+        <div class="chat-avatar"></div>
+        <div class="chat-meta">
+          <div class="chat-title"></div>
+          <div class="chat-sub"></div>
+        </div>
+        <button id="chat-info" class="icon-btn" title="О чате"><span data-icon="info"></span></button>
+      </header>
+      <div class="chat-body">
+        <div id="messages" class="messages"></div>
+        <button id="to-bottom" class="to-bottom" hidden title="Вниз"><span data-icon="down"></span><span class="badge" hidden></span></button>
+      </div>
+      <div class="composer-wrap">
+        <div id="reply-bar" class="reply-bar" hidden>
+          <span class="reply-icon" data-icon="reply"></span>
+          <div class="reply-body"><b id="reply-label">Ответ</b><div id="reply-text"></div></div>
+          <button id="reply-cancel" class="icon-btn sm"><span data-icon="x"></span></button>
+        </div>
+        <form id="composer" class="composer">
+          <label class="icon-btn" title="Прикрепить файл"><span data-icon="clip"></span><input id="file-input" type="file" multiple hidden></label>
+          <textarea id="composer-text" rows="1" placeholder="Сообщение"></textarea>
+          <button class="send" type="submit" title="Отправить (Enter)"><span data-icon="send"></span></button>
+        </form>
+        <div id="readonly-bar" class="readonly-bar" hidden><span data-icon="lock"></span> Только чтение — вы не администратор канала</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <header><h3 id="modal-title"></h3><button id="modal-close" class="icon-btn sm"><span data-icon="x"></span></button></header>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

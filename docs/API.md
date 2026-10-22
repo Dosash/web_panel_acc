@@ -1,0 +1,85 @@
+# API
+
+Все эндпоинты, кроме `/api/login` и `/api/logout`, требуют cookie `panel_auth`
+(если в `.env` задан `PANEL_PASSWORD`). Ошибки возвращаются как `{"detail": "текст"}`.
+
+Обозначения: `aid` — id аккаунта в панели, `cid` — id чата в формате Telethon
+(пользователь `123`, группа `-123`, канал/супергруппа `-100123`), `mid` — id сообщения.
+
+| Код | Когда |
+|---|---|
+| 400 | Ошибка Telegram (`Telegram: FLOOD_WAIT_...`), неверные данные |
+| 401 | Нужен вход в панель |
+| 404 | Аккаунт/медиа не найдены |
+| 409 | Аккаунт не подключён (`status` не `online`) |
+
+## Вход
+
+| Метод | Путь | Тело | Ответ |
+|---|---|---|---|
+| POST | `/api/login` | `{password}` | `{ok}` + cookie |
+| POST | `/api/logout` | — | `{ok}` |
+| GET | `/api/session` | — | `{ok, auth}` — `auth: false`, если пароль отключён |
+
+## Аккаунты
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/accounts` | Список: `id, name, color, proxy, user_id, phone, username, full_name, status, error` |
+| POST | `/api/accounts/import` | multipart: `name`, `files[]` (файлы tdata с относительными путями или zip), `new_session`, `password_2fa`, `passcode`, `proxy`. Ответ — аккаунт + `updated` |
+| PATCH | `/api/accounts/{aid}` | `{name?, color?, proxy?}`; смена прокси переподключает |
+| POST | `/api/accounts/{aid}/reconnect` | Переподключить |
+| DELETE | `/api/accounts/{aid}?logout=bool` | Удалить из панели; `logout=true` — ещё и завершить сеанс в Telegram |
+| GET | `/api/accounts/{aid}/profile` | `first_name, last_name, username, phone, about, premium` |
+| POST | `/api/accounts/{aid}/profile` | `{first_name?, last_name?, about?, username?}` |
+| POST | `/api/accounts/{aid}/photo` | multipart `file` — новый аватар |
+| GET | `/api/accounts/{aid}/authorizations` | Активные сеансы: `hash` (строка), `current`, `device`, `app`, `ip`, `country`, `active` |
+| DELETE | `/api/accounts/{aid}/authorizations/{hash}` | Завершить сеанс |
+| GET | `/api/accounts/{aid}/avatar/{peer}` | JPEG аватара (`peer` = id или `me`); 404 — фото нет |
+
+## Диалоги и чаты
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/dialogs?account_id=&archived=&limit=100` | Диалоги одного или всех аккаунтов, по дате |
+| GET | `/api/accounts/{aid}/chats/{cid}` | Описание чата: `title, type, username, about, members, is_admin, can_send, phone` |
+| POST | `/api/accounts/{aid}/chats/{cid}/read` | Отметить прочитанным |
+| POST | `/api/accounts/{aid}/chats/{cid}/edit` | `{title?, about?, username?}` — для админа группы/канала |
+| POST | `/api/accounts/{aid}/chats/{cid}/photo` | multipart `file` — фото группы/канала |
+| POST | `/api/accounts/{aid}/chats/{cid}/invite` | Создать ссылку-приглашение → `{link}` |
+| POST | `/api/accounts/{aid}/chats/{cid}/leave` | Покинуть группу/канал или удалить личный чат |
+| GET | `/api/accounts/{aid}/search?q=` | Поиск людей и чатов (по @username, имени, номеру) |
+| POST | `/api/accounts/{aid}/join` | `{link}` — `t.me/+hash`, `t.me/joinchat/hash`, `@name`, `t.me/name` |
+| POST | `/api/accounts/{aid}/channels` | `{title, about, kind: channel|group, username?}` → `{id, title, type, warning}` |
+
+Объект диалога: `account_id, id, title, type (user|bot|group|channel), username, unread, mentions,
+pinned, archived, muted, date, last_text, last_media, last_action, last_out, is_creator, is_admin, verified`.
+
+## Сообщения
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/accounts/{aid}/chats/{cid}/messages?offset_id=&limit=40` | История (старые → новые). `offset_id` — подгрузка более ранних |
+| POST | `/api/accounts/{aid}/chats/{cid}/messages` | `{text, reply_to?, silent?, no_preview?}` |
+| POST | `/api/accounts/{aid}/chats/{cid}/files` | multipart: `file`, `caption`, `reply_to`, `as_document` |
+| PATCH | `/api/accounts/{aid}/chats/{cid}/messages/{mid}` | `{text}` — редактировать |
+| DELETE | `/api/accounts/{aid}/chats/{cid}/messages/{mid}?revoke=true` | Удалить (у всех / только у себя) |
+| POST | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/pin?unpin=bool` | Закрепить/открепить |
+| POST | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/forward` | `{to_chat_id}` — переслать в другой чат того же аккаунта |
+| GET | `/api/accounts/{aid}/chats/{cid}/messages/{mid}/media?thumb=bool` | Файл медиа (кэшируется на диске) |
+
+Объект сообщения: `account_id, chat_id, id, date, edit_date, out, text, sender_id, sender_name,
+reply_to, media, action, views, pinned`.
+`media`: `{type: photo|video|gif|round|voice|audio|file|sticker|webpage|poll|geo|contact, name?, size?, mime?, w?, h?, url?, title?}`.
+
+## WebSocket `/ws`
+
+Сервер присылает JSON-события; клиент раз в 25 секунд шлёт `ping`.
+
+| `type` | Поля | Когда |
+|---|---|---|
+| `account` | `account` (как в `/api/accounts`) | Сменился статус аккаунта |
+| `message` | `message`, `chat_title`, `chat_type` | Новое входящее или исходящее сообщение |
+| `edit` | `message` | Сообщение отредактировано |
+| `delete` | `account_id`, `chat_id` (может быть `null` для личных чатов), `ids` | Сообщения удалены |
+| `read` | `account_id`, `chat_id`, `max_id`, `outbox` | Собеседник прочитал ваши сообщения |
