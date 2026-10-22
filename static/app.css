@@ -431,6 +431,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s, transform .1s;
 }
 .kb-btn:hover { background: var(--surface-3); text-decoration: none; }
+.msg.out a.kb-btn { color: var(--text); text-decoration: none; }   /* кнопки под своими постами — не как ссылки в тексте */
 .kb-btn:active { transform: scale(.98); }
 .kb-btn:disabled { opacity: .55; cursor: default; }
 .kb-btn.loading { color: transparent; }
@@ -499,6 +500,69 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
 }
 .readonly-bar svg.i { width: 16px; height: 16px; }
+.readonly-bar { flex-wrap: wrap; }
+.readonly-bar .btn { margin-left: 6px; }
+
+/* кнопка мини-приложения бота слева в поле ввода */
+.composer .bot-app {
+  display: inline-flex; align-items: center; gap: 6px; height: 42px; padding: 0 14px 0 10px; border-radius: 16px; border: 0;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 13.5px; cursor: pointer; flex: none;
+  max-width: 180px; transition: filter .15s;
+}
+.composer .bot-app[hidden] { display: none; }
+.composer .bot-app:hover { filter: brightness(1.15); }
+.composer .bot-app svg.i { width: 18px; height: 18px; flex: none; }
+.composer .bot-app .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* карточка канала/бота по ссылке */
+.lp-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.lp-actions .btn { flex: 1; justify-content: center; }
+.verified { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: #fff; vertical-align: -2px; }
+.verified svg.i { width: 11px; height: 11px; stroke-width: 3; }
+
+/* ================= Мини-приложения ================= */
+.webapp-overlay {
+  position: fixed; inset: 0; z-index: 55; display: grid; place-items: center; padding: 16px;
+  background: rgb(3 7 18 / .6); backdrop-filter: blur(6px); animation: fade .15s ease-out;
+}
+.webapp {
+  width: min(430px, 100%); height: min(780px, 100%); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--elev); border: 1px solid var(--border-strong); border-radius: 22px; box-shadow: var(--shadow); animation: pop .18s ease-out;
+}
+.webapp-overlay.full { padding: 0; }
+.webapp-overlay.full .webapp { width: 100%; height: 100%; border-radius: 0; border: 0; }
+.webapp > header { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--border); }
+.webapp .wa-back:not([hidden]) + .wa-title { padding-left: 2px; }
+.webapp .wa-back { margin-left: -6px; }
+.webapp .wa-title { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wa-body { position: relative; flex: 1; min-height: 0; background: var(--elev); }
+.wa-body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--elev); }
+.wa-loading {
+  position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 14px;
+  padding: 24px; text-align: center; background: var(--elev);
+}
+.wa-loading[hidden] { display: none; }
+.wa-loading svg.i { width: 14px; height: 14px; vertical-align: -2px; }
+.spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .7s linear infinite; }
+.wa-buttons { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+.wa-buttons[hidden] { display: none; }
+.wa-btn {
+  flex: 1; height: 46px; border: 0; border-radius: 13px; cursor: pointer; font-weight: 600; font-size: 15px;
+  background: var(--accent); color: #fff; position: relative; transition: filter .15s;
+}
+.wa-btn[hidden] { display: none; }
+.wa-btn.secondary { background: var(--surface-2); color: var(--accent); }
+.wa-btn:hover { filter: brightness(1.08); }
+.wa-btn:disabled { opacity: .55; cursor: default; filter: none; }
+.wa-btn.loading { color: transparent !important; }
+.wa-btn.loading::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  border-radius: 50%; border: 2.5px solid #fff; border-top-color: transparent; animation: spin .7s linear infinite;
+}
+@media (max-width: 860px) {
+  .webapp-overlay { padding: 0; }
+  .webapp { width: 100%; height: 100%; border-radius: 0; border: 0; }
+}
 
 /* ================= Модальные окна ================= */
 .modal {
@@ -592,6 +656,57 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .info-row { display: flex; gap: 12px; align-items: flex-start; padding: 9px 4px; }
 .info-row > [data-icon] { color: var(--muted); margin-top: 1px; }
 .info-row .val { white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere; }
+
+/* окно «Поддержка» */
+.rail-tool.support { color: var(--ok); }
+.rail-tool.support:hover { color: var(--ok); background: rgb(46 204 143 / .14); }
+.support-head { display: flex; gap: 14px; align-items: center; }
+.support-head .brand-mark { width: 48px; height: 48px; border-radius: 15px; flex: none; }
+.support-head .name { font-weight: 700; font-size: 16px; }
+.support-head a { color: var(--accent); }
+.section-title svg.i { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; color: var(--danger); fill: currentColor; }
+.support-text { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.donate { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.donate-card {
+  display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 14px; color: var(--text);
+  background: var(--accent-soft); border: 1px solid var(--border); transition: border-color .15s, transform .1s;
+}
+.donate-card:hover { border-color: var(--accent); }
+.donate-card:hover, .support-link:hover, a.btn:hover { text-decoration: none; }
+.donate-card:active { transform: scale(.98); }
+.donate-card .ti { width: 40px; height: 40px; border-radius: 12px; background: var(--grad); color: #fff; display: grid; place-items: center; flex: none; }
+.donate-card b { display: block; }
+.donate-card .small { display: block; color: var(--muted); margin-top: 2px; }
+.support-links { display: grid; gap: 2px; }
+.support-link { display: flex; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 12px; color: var(--text); }
+.support-link:hover { background: var(--surface-2); }
+.support-link > span:nth-child(2) { flex: 1; min-width: 0; }
+.support-link b { display: block; font-weight: 600; }
+.support-link .small { display: block; }
+.support-link > svg.i { width: 16px; height: 16px; color: var(--faint); }
+.support-link .si {
+  width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; flex: none;
+  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent);
+}
+
+/* управление каналом: приглашение, админы, права */
+.invite-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.invite-row input { flex: 1 1 200px; min-width: 0; font-size: 13px; }
+.back-btn { margin-bottom: 12px; }
+.admin-list { display: grid; gap: 2px; margin-bottom: 12px; }
+.list-item .grow { flex: 1; min-width: 0; }
+.list-item .grow b { overflow-wrap: anywhere; }
+.list-item.static { cursor: default; }
+.list-item.static:hover { background: none; }
+.checks { display: grid; gap: 2px; padding: 4px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); }
+.form .checks label.opt {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;
+  color: var(--text); font-size: 14px; font-weight: 500; cursor: pointer;
+}
+.form .checks label.opt:hover { background: var(--surface-3); }
+.checks .opt input { width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--accent); flex: none; }
+.form .checks label.opt.off { color: var(--faint); cursor: default; }
+.form .checks label.opt.off:hover { background: none; }
 
 /* ================= Тосты ================= */
 .toast {

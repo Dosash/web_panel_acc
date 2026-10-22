@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import shutil
@@ -6,6 +7,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -17,7 +19,7 @@ from telethon.errors import BotResponseTimeoutError, RPCError
 
 from . import storage
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, HUB_URL, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
-from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type
+from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type, username
 from .tdata_import import ImportError_, convert, save_upload
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -81,6 +83,25 @@ RPC_MESSAGES = {
     "CHAT_ADMIN_REQUIRED": "Нужны права администратора",
     "INVITE_HASH_EXPIRED": "Ссылка-приглашение устарела",
     "USER_ALREADY_PARTICIPANT": "Аккаунт уже состоит в этом чате",
+    "USER_PRIVACY_RESTRICTED": "Настройки приватности пользователя не позволяют добавить его",
+    "USER_NOT_MUTUAL_CONTACT": "Пользователь должен быть у аккаунта во взаимных контактах",
+    "USER_NOT_PARTICIPANT": "Пользователь не состоит в этом чате",
+    "USER_CREATOR": "Права владельца изменить нельзя",
+    "USER_ID_INVALID": "Пользователь не найден",
+    "USERNAME_NOT_OCCUPIED": "Пользователя с таким именем нет",
+    "ADMINS_TOO_MUCH": "Достигнут предел числа администраторов",
+    "RIGHT_FORBIDDEN": "Нельзя выдать право, которого нет у самого аккаунта",
+    "ADMIN_RANK_INVALID": "Должность: до 16 символов, без эмодзи",
+    "ADMIN_RANK_EMOJI_NOT_ALLOWED": "Должность: до 16 символов, без эмодзи",
+    "BOT_GROUPS_BLOCKED": "Этого бота нельзя добавить в группу",
+    "CHAT_NOT_MODIFIED": "Ничего не изменилось",
+    "SECONDS_INVALID": "Недопустимый интервал медленного режима",
+    "INVITE_REQUEST_SENT": "Заявка отправлена — вступление после одобрения администратором",
+    "INVITE_HASH_INVALID": "Ссылка-приглашение недействительна",
+    "CHANNEL_PRIVATE": "Канал закрыт или аккаунт в нём заблокирован",
+    "BOT_APP_INVALID": "У бота нет такого мини-приложения",
+    "BOT_INVALID": "Это не бот или у него нет мини-приложения",
+    "QUERY_ID_INVALID": "Сеанс мини-приложения истёк — откройте его заново",
 }
 
 
@@ -459,29 +480,220 @@ async def remove_folder_item(folder_id: int, account_id: int, chat_id: int):
     return storage.get_folder(folder_id)
 
 
+# Права администратора; "other" интерфейс не показывает, но Telegram ставит его всем админам
+ADMIN_RIGHTS = ("change_info", "post_messages", "edit_messages", "delete_messages", "ban_users", "invite_users",
+                "pin_messages", "add_admins", "anonymous", "manage_call", "post_stories", "edit_stories",
+                "delete_stories", "manage_topics", "other")
+
+# Разрешения участников группы → поля ChatBannedRights (True в них — запрет)
+PERMISSIONS = {
+    "send_plain": ("send_plain",), "send_photos": ("send_photos",), "send_videos": ("send_videos",),
+    "stickers": ("send_stickers", "send_gifs", "send_games", "send_inline"),
+    "send_audios": ("send_audios",), "send_docs": ("send_docs",), "send_voices": ("send_voices",),
+    "send_roundvideos": ("send_roundvideos",), "embed_links": ("embed_links",), "send_polls": ("send_polls",),
+    "invite_users": ("invite_users",), "pin_messages": ("pin_messages",), "change_info": ("change_info",),
+}
+MEDIA_FIELDS = ("send_photos", "send_videos", "send_stickers", "send_gifs", "send_games", "send_inline",
+                "send_audios", "send_docs", "send_voices", "send_roundvideos")
+SLOWMODE = (0, 10, 30, 60, 300, 900, 3600)
+
+
+def rights_dict(rights) -> dict:
+    return {k: bool(getattr(rights, k, False)) for k in ADMIN_RIGHTS} if rights else {}
+
+
+def my_rights(entity) -> dict:
+    if getattr(entity, "creator", False):
+        return {k: True for k in ADMIN_RIGHTS}
+    return rights_dict(getattr(entity, "admin_rights", None))
+
+
+def permissions_dict(banned) -> dict:
+    """Что участникам разрешено. Старые клиенты запрещают всё разом через send_messages/send_media."""
+    if banned is None:
+        return {k: True for k in PERMISSIONS}
+    result = {}
+    for key, fields in PERMISSIONS.items():
+        off = any(getattr(banned, f, False) for f in fields)
+        if fields[0].startswith("send_"):
+            off = off or bool(banned.send_messages) or (key != "send_plain" and bool(banned.send_media))
+        result[key] = not off
+    return result
+
+
+def banned_rights(allowed: dict[str, bool]) -> types.ChatBannedRights:
+    kw = {f: True for key, fields in PERMISSIONS.items() if not allowed.get(key, True) for f in fields}
+    if all(kw.get(f) for f in MEDIA_FIELDS):
+        kw["send_media"] = True
+    return types.ChatBannedRights(until_date=None, **kw)
+
+
+async def _full_entity(aid: int, cid: int):
+    return await manager.client(aid).get_entity(await manager.entity(aid, cid))
+
+
 @app.get("/api/accounts/{aid}/chats/{cid}", dependencies=A)
 async def chat_info(aid: int, cid: int):
     client = manager.client(aid)
-    entity = await client.get_entity(await manager.entity(aid, cid))
+    entity = await _full_entity(aid, cid)
     info = {"account_id": aid, "id": cid, "title": display_name(entity), "type": peer_type(entity),
-            "username": getattr(entity, "username", None), "about": "", "members": None,
+            "username": username(entity), "about": "", "members": None,
             "is_creator": bool(getattr(entity, "creator", False)),
             "is_admin": bool(getattr(entity, "admin_rights", None)) or bool(getattr(entity, "creator", False)),
             "can_send": True, "phone": getattr(entity, "phone", None)}
     if isinstance(entity, types.User):
         full = await client(functions.users.GetFullUserRequest(entity))
         info["about"] = full.full_user.about or ""
+        if entity.bot:
+            info["about"] = info["about"] or getattr(full.full_user.bot_info, "description", None) or ""
+            info["webapp"] = bot_webapp(entity, full.full_user)
     elif isinstance(entity, types.Channel):
         full = await client(functions.channels.GetFullChannelRequest(entity))
         info["about"] = full.full_chat.about or ""
         info["members"] = full.full_chat.participants_count
+        info["joined"] = not entity.left
         if entity.broadcast and not info["is_admin"]:
             info["can_send"] = False
+        if info["is_admin"]:
+            info["settings"] = {
+                "signatures": bool(entity.signatures), "noforwards": bool(entity.noforwards),
+                "slowmode": full.full_chat.slowmode_seconds or 0,
+                "hidden_prehistory": bool(full.full_chat.hidden_prehistory),
+                "permissions": permissions_dict(entity.default_banned_rights),
+            }
     elif isinstance(entity, types.Chat):
         full = await client(functions.messages.GetFullChatRequest(entity.id))
         info["about"] = full.full_chat.about or ""
         info["members"] = entity.participants_count
+        info["joined"] = not entity.left
+        info["legacy"] = True  # обычная группа: админы и медленный режим — только у супергрупп
+        if info["is_admin"]:
+            info["settings"] = {"noforwards": bool(entity.noforwards),
+                                "permissions": permissions_dict(entity.default_banned_rights)}
+    if info["is_admin"] and not isinstance(entity, types.User):
+        invite = getattr(full.full_chat, "exported_invite", None)
+        info["invite"] = getattr(invite, "link", None)
+        info["my_rights"] = my_rights(entity)
     return info
+
+
+class ChatSettingsIn(BaseModel):
+    signatures: bool | None = None
+    noforwards: bool | None = None
+    slowmode: int | None = None
+    hidden_prehistory: bool | None = None
+    permissions: dict[str, bool] | None = None
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/settings", dependencies=A)
+async def chat_settings(aid: int, cid: int, body: ChatSettingsIn):
+    client = manager.client(aid)
+    entity = await _full_entity(aid, cid)
+    channel = isinstance(entity, types.Channel)
+    requests = []
+    if body.signatures is not None and channel:
+        requests.append(functions.channels.ToggleSignaturesRequest(entity, signatures_enabled=body.signatures))
+    if body.noforwards is not None:
+        requests.append(functions.messages.ToggleNoForwardsRequest(entity, body.noforwards))
+    if body.slowmode is not None and channel:
+        if body.slowmode not in SLOWMODE:
+            raise HTTPException(400, "Недопустимый интервал медленного режима")
+        requests.append(functions.channels.ToggleSlowModeRequest(entity, body.slowmode))
+    if body.hidden_prehistory is not None and channel:
+        requests.append(functions.channels.TogglePreHistoryHiddenRequest(entity, body.hidden_prehistory))
+    if body.permissions is not None:
+        requests.append(functions.messages.EditChatDefaultBannedRightsRequest(entity, banned_rights(body.permissions)))
+    for request in requests:
+        try:
+            await client(request)
+        except RPCError as e:
+            if e.message != "CHAT_NOT_MODIFIED":
+                raise
+    return await chat_info(aid, cid)
+
+
+async def _admin_channel(aid: int, cid: int) -> types.Channel:
+    entity = await _full_entity(aid, cid)
+    if not isinstance(entity, types.Channel):
+        raise HTTPException(400, "Администраторы настраиваются только в каналах и супергруппах")
+    return entity
+
+
+@app.get("/api/accounts/{aid}/chats/{cid}/admins", dependencies=A)
+async def chat_admins(aid: int, cid: int):
+    client = manager.client(aid)
+    channel = await _admin_channel(aid, cid)
+    res = await client(functions.channels.GetParticipantsRequest(
+        channel, types.ChannelParticipantsAdmins(), offset=0, limit=200, hash=0))
+    users = {u.id: u for u in res.users}
+    result = []
+    for p in res.participants:
+        if not isinstance(p, (types.ChannelParticipantAdmin, types.ChannelParticipantCreator)):
+            continue
+        u = users.get(p.user_id)
+        creator = isinstance(p, types.ChannelParticipantCreator)
+        result.append({"id": p.user_id, "name": display_name(u), "username": getattr(u, "username", None),
+                       "bot": bool(getattr(u, "bot", False)), "self": bool(getattr(u, "is_self", False)),
+                       "rank": p.rank or "", "creator": creator, "can_edit": bool(getattr(p, "can_edit", False)),
+                       "rights": rights_dict(p.admin_rights)})
+    result.sort(key=lambda a: (not a["creator"], a["name"].lower()))
+    return result
+
+
+async def _resolve_user(aid: int, raw: str):
+    """@username, ссылка t.me/…, телефон контакта или числовой id → InputPeerUser."""
+    s = raw.strip()
+    if re.fullmatch(r"\d+", s):
+        peer = await manager.entity(aid, int(s))
+    else:
+        name = re.sub(r"^(https?://)?(t\.me|telegram\.me)/", "", s).lstrip("@").split("/")[0]
+        if not name:
+            raise HTTPException(400, "Укажите пользователя")
+        try:
+            peer = await manager.client(aid).get_input_entity(name)
+        except ValueError:
+            raise HTTPException(400, f"Пользователь «{s}» не найден")
+    if not isinstance(peer, (types.InputPeerUser, types.InputPeerSelf)):
+        raise HTTPException(400, "Администратором можно назначить только пользователя или бота")
+    return peer
+
+
+class AdminIn(BaseModel):
+    user: str               # @username, ссылка, телефон или id (при правке существующего админа)
+    rights: dict[str, bool]
+    rank: str = ""
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/admins", dependencies=A)
+async def set_admin(aid: int, cid: int, body: AdminIn):
+    channel = await _admin_channel(aid, cid)
+    rights = {k: True for k, v in body.rights.items() if v and k in ADMIN_RIGHTS and k != "other"}
+    if not rights:
+        raise HTTPException(400, "Отметьте хотя бы одно право")
+    if my_rights(channel).get("other"):
+        rights["other"] = True
+    user = await _resolve_user(aid, body.user)
+    await manager.client(aid)(functions.channels.EditAdminRequest(
+        channel, user, types.ChatAdminRights(**rights), rank=body.rank.strip()[:16]))
+    return await chat_admins(aid, cid)
+
+
+@app.delete("/api/accounts/{aid}/chats/{cid}/admins/{uid}", dependencies=A)
+async def remove_admin(aid: int, cid: int, uid: int):
+    channel = await _admin_channel(aid, cid)
+    await manager.client(aid)(functions.channels.EditAdminRequest(
+        channel, await manager.entity(aid, uid), types.ChatAdminRights(), rank=""))
+    return await chat_admins(aid, cid)
+
+
+@app.delete("/api/accounts/{aid}/chats/{cid}", dependencies=A)
+async def delete_chat(aid: int, cid: int):
+    """Удалить канал или супергруппу целиком — только владелец."""
+    channel = await _admin_channel(aid, cid)
+    if not channel.creator:
+        raise HTTPException(403, "Удалить может только владелец")
+    await manager.client(aid)(functions.channels.DeleteChannelRequest(channel))
+    return {"ok": True}
 
 
 @app.get("/api/accounts/{aid}/chats/{cid}/messages", dependencies=A)
@@ -585,6 +797,13 @@ async def click_button(aid: int, cid: int, mid: int, body: ClickIn):
         request = functions.messages.GetBotCallbackAnswerRequest(peer=entity, msg_id=mid, data=kind.data)
     elif isinstance(kind, types.InlineButtonTypeGame):
         request = functions.messages.GetBotCallbackAnswerRequest(peer=entity, msg_id=mid, game=True)
+    elif isinstance(kind, types.InlineButtonTypeWebView):
+        # Мини-приложение открывает интерфейс (POST /webapp); бот — тот, кто прислал сообщение
+        bot = msg.via_bot_id or msg.sender_id
+        if not bot or bot < 0:
+            return {"message": "", "alert": False, "url": kind.url}
+        return {"message": "", "alert": False, "url": "",
+                "webapp": {"bot": str(bot), "mode": "button", "url": kind.url}}
     else:
         raise HTTPException(400, "Эта кнопка не нажимается из панели")
     try:
@@ -596,8 +815,30 @@ async def click_button(aid: int, cid: int, mid: int, body: ClickIn):
 
 @app.post("/api/accounts/{aid}/chats/{cid}/read", dependencies=A)
 async def mark_read(aid: int, cid: int):
-    await manager.client(aid).send_read_acknowledge(await manager.entity(aid, cid))
+    await manager.read_chat(aid, await manager.entity(aid, cid))
     return {"ok": True}
+
+
+@app.post("/api/accounts/{aid}/read_all", dependencies=A)
+async def read_all(aid: int):
+    """«Прочитать все»: все диалоги аккаунта, включая архив и упоминания."""
+    client = manager.client(aid)
+    count = 0
+    async for d in client.iter_dialogs():
+        marked = bool(getattr(d.dialog, "unread_mark", False))
+        if not (d.unread_count or d.unread_mentions_count or marked):
+            continue
+        try:
+            if d.unread_count or d.unread_mentions_count:
+                await client.send_read_acknowledge(d.input_entity, max_id=d.dialog.top_message,
+                                                   clear_mentions=bool(d.unread_mentions_count))
+            if marked:
+                await client(functions.messages.MarkDialogUnreadRequest(
+                    peer=types.InputDialogPeer(d.input_entity), unread=False))
+            count += 1
+        except RPCError as e:
+            log.warning("Прочитать все, аккаунт %s, чат %s: %s", aid, d.id, e)
+    return {"ok": True, "count": count}
 
 
 @app.get("/api/accounts/{aid}/chats/{cid}/messages/{mid}/media", dependencies=A)
@@ -657,7 +898,7 @@ async def search(aid: int, q: str):
     def add(entity):
         pid = manager.peer_id(entity)
         found[pid] = {"id": pid, "title": display_name(entity), "type": peer_type(entity),
-                      "username": getattr(entity, "username", None)}
+                      "username": username(entity)}
 
     if len(q) >= 2:
         res = await client(functions.contacts.SearchRequest(q=q.lstrip("@"), limit=20))
@@ -672,12 +913,18 @@ async def search(aid: int, q: str):
 
 
 class JoinIn(BaseModel):
-    link: str
+    link: str = ""
+    chat_id: int | None = None   # публичный канал, уже найденный по ссылке (у него может не быть @имени)
 
 
 @app.post("/api/accounts/{aid}/join", dependencies=A)
 async def join(aid: int, body: JoinIn):
     client = manager.client(aid)
+    if body.chat_id:
+        entity = await client.get_entity(await manager.entity(aid, body.chat_id))
+        if isinstance(entity, types.Channel):
+            await client(functions.channels.JoinChannelRequest(entity))
+        return {"id": manager.peer_id(entity), "title": display_name(entity), "type": peer_type(entity)}
     link = body.link.strip()
     m = re.search(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)([\w-]+)", link)
     if m:
@@ -768,6 +1015,169 @@ async def invite_link(aid: int, cid: int):
 async def leave_chat(aid: int, cid: int):
     client = manager.client(aid)
     await client.delete_dialog(await manager.entity(aid, cid))
+    return {"ok": True}
+
+
+# ---------- ссылки t.me и мини-приложения ----------
+
+TG_HOSTS = {"t.me", "telegram.me", "telegram.dog"}
+# служебные пути t.me, которые не являются именем канала или бота
+TG_RESERVED = {"addstickers", "addemoji", "addtheme", "addlist", "setlanguage", "share", "proxy", "socks", "login",
+               "confirmphone", "iv", "bg", "invoice", "boost", "contact", "giftcode", "nft", "m", "stars", "premium"}
+WEBAPP_PLATFORM = "weba"   # как у Telegram Web: приложения рассчитаны на работу во фрейме
+
+
+def parse_tg_link(link: str) -> dict:
+    """t.me/… и tg://… → что открыть: username (+ post, app, start, startapp), invite или channel_id."""
+    u = urlparse(link if "://" in link else f"https://{link}")
+    q = parse_qs(u.query, keep_blank_values=True)
+    one = lambda k: q[k][0] if k in q else None
+    if u.scheme == "tg":
+        if u.netloc == "join" and one("invite"):
+            return {"invite": one("invite")}
+        if u.netloc == "resolve" and one("domain"):
+            post = one("post")
+            return {"username": one("domain"), "post": int(post) if post and post.isdigit() else None,
+                    "app": one("appname"), "start": one("start"), "startapp": one("startapp")}
+        return {}
+    if (u.hostname or "").lower().removeprefix("www.") not in TG_HOSTS:
+        return {}
+    parts = [p for p in u.path.split("/") if p]
+    if parts[:1] == ["s"]:   # t.me/s/name — веб-превью канала
+        parts = parts[1:]
+    if not parts:
+        return {}
+    head = parts[0]
+    if head.startswith("+") and not head[1:].isdigit():
+        return {"invite": head[1:]}
+    if head == "joinchat" and len(parts) > 1:
+        return {"invite": parts[1]}
+    if head == "c" and len(parts) > 1 and parts[1].isdigit():
+        return {"channel_id": int(parts[1]), "post": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None}
+    if head.lower() in TG_RESERVED or not re.fullmatch(r"[A-Za-z]\w{3,31}", head):
+        return {}
+    result = {"username": head, "post": None, "app": None, "start": one("start"), "startapp": one("startapp")}
+    if len(parts) > 1:
+        if parts[1].isdigit():
+            result["post"] = int(parts[1])
+        elif re.fullmatch(r"\w+", parts[1]):
+            result["app"] = parts[1]
+    return result
+
+
+def bot_webapp(user, full_user) -> dict | None:
+    """Кнопка-приложение бота: меню бота с адресом или «главное» мини-приложение."""
+    menu = getattr(getattr(full_user, "bot_info", None), "menu_button", None)
+    if isinstance(menu, types.BotMenuButton):
+        return {"mode": "menu", "text": menu.text, "url": menu.url}
+    if getattr(user, "bot_has_main_app", False):
+        return {"mode": "main", "text": "Приложение", "url": ""}
+    return None
+
+
+async def _peer_card(aid: int, entity) -> dict:
+    """Карточка для предпросмотра по ссылке: можно посмотреть, не вступая."""
+    client = manager.client(aid)
+    card = {"kind": "chat", "id": manager.peer_id(entity), "title": display_name(entity), "type": peer_type(entity),
+            "username": username(entity), "verified": bool(getattr(entity, "verified", False)),
+            "about": "", "members": None, "joined": True, "webapp": None}
+    if isinstance(entity, types.Channel):
+        card["joined"] = not entity.left
+        try:
+            full = await client(functions.channels.GetFullChannelRequest(entity))
+            card["about"], card["members"] = full.full_chat.about or "", full.full_chat.participants_count
+        except RPCError:
+            card["members"] = getattr(entity, "participants_count", None)
+    elif isinstance(entity, types.Chat):
+        card["joined"], card["members"] = not entity.left, entity.participants_count
+    elif isinstance(entity, types.User):
+        full = await client(functions.users.GetFullUserRequest(entity))
+        card["about"] = full.full_user.about or ""
+        if entity.bot:
+            card["about"] = card["about"] or getattr(full.full_user.bot_info, "description", None) or ""
+            card["webapp"] = bot_webapp(entity, full.full_user)
+    return card
+
+
+@app.get("/api/accounts/{aid}/resolve", dependencies=A)
+async def resolve_link(aid: int, link: str):
+    """Ссылка на канал, группу, бота или приглашение → карточка для предпросмотра в панели."""
+    client = manager.client(aid)
+    p = parse_tg_link(link.strip())
+    if "invite" in p:
+        res = await client(functions.messages.CheckChatInviteRequest(p["invite"]))
+        if isinstance(res, types.ChatInviteAlready):
+            return await _peer_card(aid, res.chat)
+        if isinstance(res, types.ChatInvitePeek):
+            return {**await _peer_card(aid, res.chat), "joined": False, "invite": link}
+        return {"kind": "invite", "id": None, "title": res.title, "type": "channel" if res.broadcast else "group",
+                "username": None, "verified": bool(res.verified), "about": res.about or "",
+                "members": res.participants_count, "joined": False, "request_needed": bool(res.request_needed),
+                "invite": link, "webapp": None}
+    if "channel_id" in p:
+        try:
+            entity = await client.get_entity(await manager.entity(aid, int(f"-100{p['channel_id']}")))
+        except ValueError:
+            raise HTTPException(404, "Аккаунт не состоит в этом закрытом канале")
+        return {**await _peer_card(aid, entity), "post": p["post"]}
+    if "username" in p:
+        try:
+            entity = await client.get_entity(p["username"])
+        except ValueError:
+            raise HTTPException(404, f"@{p['username']} не найден")
+        card = await _peer_card(aid, entity)
+        return {**card, "post": p["post"], "app": p["app"], "start": p["start"], "startapp": p["startapp"]}
+    return {"kind": "external"}
+
+
+class WebAppIn(BaseModel):
+    bot: str                       # id или @username бота
+    mode: str = "main"             # button — кнопка под сообщением, menu — меню бота, main — главное, app — t.me/bot/app
+    chat_id: int | None = None     # чат, из которого открыто (по умолчанию — чат с ботом)
+    url: str = ""
+    app: str = ""
+    start_param: str = ""
+    theme: dict[str, str] | None = None
+
+
+@app.post("/api/accounts/{aid}/webapp", dependencies=A)
+async def open_webapp(aid: int, body: WebAppIn):
+    """Адрес мини-приложения с подписанными данными пользователя (initData) — его открывает фрейм панели."""
+    client = manager.client(aid)
+    bot = await _resolve_user(aid, body.bot)
+    peer = await manager.entity(aid, body.chat_id) if body.chat_id else bot
+    theme = types.DataJSON(json.dumps(body.theme)) if body.theme else None
+    start = body.start_param or None
+    if body.mode == "app":
+        res = await client(functions.messages.RequestAppWebViewRequest(
+            peer=peer, app=types.InputBotAppShortName(bot, body.app), platform=WEBAPP_PLATFORM,
+            start_param=start, theme_params=theme))
+    elif body.mode == "main":
+        res = await client(functions.messages.RequestMainWebViewRequest(
+            peer=peer, bot=bot, platform=WEBAPP_PLATFORM, start_param=start, theme_params=theme))
+    elif body.mode in ("button", "menu"):
+        res = await client(functions.messages.RequestWebViewRequest(
+            peer=peer, bot=bot, platform=WEBAPP_PLATFORM, url=body.url or None, start_param=start,
+            from_bot_menu=body.mode == "menu", theme_params=theme))
+    else:
+        raise HTTPException(400, "Неизвестный способ открытия")
+    entity = await client.get_entity(bot)
+    return {"url": res.url, "query_id": str(res.query_id) if getattr(res, "query_id", None) else None,
+            "bot_id": manager.peer_id(entity), "title": display_name(entity)}
+
+
+class ProlongIn(BaseModel):
+    bot: str
+    query_id: str
+    chat_id: int | None = None
+
+
+@app.post("/api/accounts/{aid}/webapp/prolong", dependencies=A)
+async def prolong_webapp(aid: int, body: ProlongIn):
+    """Пока приложение открыто, Telegram ждёт отметку раз в минуту, иначе ответ бота не дойдёт."""
+    bot = await _resolve_user(aid, body.bot)
+    peer = await manager.entity(aid, body.chat_id) if body.chat_id else bot
+    await manager.client(aid)(functions.messages.ProlongWebViewRequest(peer=peer, bot=bot, query_id=int(body.query_id)))
     return {"ok": True}
 
 

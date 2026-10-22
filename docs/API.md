@@ -33,6 +33,7 @@
 | POST | `/api/accounts/import` | multipart: `name`, `files[]` (файлы tdata с относительными путями или zip), `new_session`, `password_2fa`, `passcode`, `proxy`. Ответ — аккаунт + `updated` |
 | PATCH | `/api/accounts/{aid}` | `{name?, color?, proxy?}`; смена прокси переподключает |
 | POST | `/api/accounts/{aid}/reconnect` | Переподключить |
+| POST | `/api/accounts/{aid}/read_all` | Отметить прочитанными все чаты аккаунта (и архив, и упоминания) → `{ok, count}` |
 | DELETE | `/api/accounts/{aid}?logout=bool` | Удалить из панели; `logout=true` — ещё и завершить сеанс в Telegram |
 | GET | `/api/accounts/{aid}/profile` | `first_name, last_name, username, phone, about, premium` |
 | POST | `/api/accounts/{aid}/profile` | `{first_name?, last_name?, about?, username?}` |
@@ -49,18 +50,35 @@
 | POST | `/api/accounts/{aid}/chats/{cid}/pin` | `{pinned}` — закрепить/открепить чат в Telegram (лимит 5, с Premium 10) |
 | POST | `/api/accounts/{aid}/chats/{cid}/mute` | `{muted}` — выключить уведомления навсегда / включить |
 | POST | `/api/accounts/{aid}/chats/{cid}/archive` | `{archived}` — в архив / из архива |
-| GET | `/api/accounts/{aid}/chats/{cid}` | Описание чата: `title, type, username, about, members, is_admin, can_send, phone` |
-| POST | `/api/accounts/{aid}/chats/{cid}/read` | Отметить прочитанным |
+| GET | `/api/accounts/{aid}/chats/{cid}` | Описание чата: `title, type, username, about, members, is_admin, can_send, phone`; у каналов и групп `joined`, у ботов `webapp` (`{mode, text, url}` или `null`). Для админа группы/канала ещё `invite` (основная ссылка), `my_rights` (права аккаунта), `settings` (см. ниже), `legacy: true` у обычной (не супер-) группы |
+| POST | `/api/accounts/{aid}/chats/{cid}/read` | Отметить прочитанным до последнего сообщения |
 | POST | `/api/accounts/{aid}/chats/{cid}/edit` | `{title?, about?, username?}` — для админа группы/канала |
 | POST | `/api/accounts/{aid}/chats/{cid}/photo` | multipart `file` — фото группы/канала |
 | POST | `/api/accounts/{aid}/chats/{cid}/invite` | Создать ссылку-приглашение → `{link}` |
 | POST | `/api/accounts/{aid}/chats/{cid}/leave` | Покинуть группу/канал или удалить личный чат |
+| POST | `/api/accounts/{aid}/chats/{cid}/settings` | `{signatures?, noforwards?, slowmode?, hidden_prehistory?, permissions?}` — только изменённые поля; ответ как у описания чата |
+| GET | `/api/accounts/{aid}/chats/{cid}/admins` | Админы канала/супергруппы: `id, name, username, bot, self, rank, creator, can_edit, rights` |
+| POST | `/api/accounts/{aid}/chats/{cid}/admins` | `{user, rights, rank}` — назначить или изменить права; `user` — `@username`, `t.me/…`, телефон контакта или id. Ответ — новый список |
+| DELETE | `/api/accounts/{aid}/chats/{cid}/admins/{uid}` | Снять права администратора → новый список |
+| DELETE | `/api/accounts/{aid}/chats/{cid}` | Удалить канал/супергруппу целиком (только владелец) |
 | GET | `/api/accounts/{aid}/search?q=` | Поиск людей и чатов (по @username, имени, номеру) |
-| POST | `/api/accounts/{aid}/join` | `{link}` — `t.me/+hash`, `t.me/joinchat/hash`, `@name`, `t.me/name` |
+| POST | `/api/accounts/{aid}/join` | `{link}` — `t.me/+hash`, `t.me/joinchat/hash`, `@name`, `t.me/name`; или `{chat_id}` — публичный канал, найденный через `/resolve` |
+| GET | `/api/accounts/{aid}/resolve?link=` | Ссылка `t.me/…` или `tg://…` → карточка: `kind` (`chat`, `invite`, `external` — открыть в браузере), `id, title, type, username, verified, about, members, joined, webapp`; для ссылок на бота и пост ещё `post, app, start, startapp`; у приглашений `invite, request_needed` |
+| POST | `/api/accounts/{aid}/webapp` | `{bot, mode: button\|menu\|main\|app, chat_id?, url?, app?, start_param?, theme?}` → `{url, query_id, bot_id, title}` — адрес мини-приложения с подписанными данными пользователя для фрейма |
+| POST | `/api/accounts/{aid}/webapp/prolong` | `{bot, query_id, chat_id?}` — раз в минуту, пока открыто приложение из кнопки или меню бота |
 | POST | `/api/accounts/{aid}/channels` | `{title, about, kind: channel|group, username?}` → `{id, title, type, warning}` |
 
 Объект диалога: `account_id, id, title, type (user|bot|group|channel), username, unread, mentions,
 pinned, archived, muted, date, last_text, last_media, last_action, last_out, is_creator, is_admin, verified`.
+
+Права администратора (`rights`, `my_rights`) — словарь `true/false`: `change_info, post_messages, edit_messages,
+delete_messages, ban_users, invite_users, pin_messages, add_admins, anonymous, manage_call, post_stories,
+edit_stories, delete_stories, manage_topics, other`.
+
+`settings`: `signatures` и `slowmode`/`hidden_prehistory` (только каналы и супергруппы), `noforwards`,
+`permissions` — что разрешено участникам группы: `send_plain, send_photos, send_videos, stickers, send_audios,
+send_docs, send_voices, send_roundvideos, embed_links, send_polls, invite_users, pin_messages, change_info`.
+`slowmode` — 0, 10, 30, 60, 300, 900 или 3600 секунд.
 
 ## Папки панели
 
@@ -100,6 +118,7 @@ sender_name, reply_to, media, action, views, pinned`.
   Смещения в UTF-16 (совпадают с индексами строк JavaScript).
 - `buttons` — inline-кнопки: массив рядов, кнопка `{text, kind, url?, copy?}`, где `kind` —
   `url|webview|callback|password|game|switch|copy|profile|buy|disabled|other`. `null`, если кнопок нет.
+  Нажатие `webview` через `/click` возвращает `webapp: {bot, mode, url}` — его передают в `/webapp`.
 
 ## WebSocket `/ws`
 
@@ -111,4 +130,4 @@ sender_name, reply_to, media, action, views, pinned`.
 | `message` | `message`, `chat_title`, `chat_type` | Новое входящее или исходящее сообщение |
 | `edit` | `message` | Сообщение отредактировано |
 | `delete` | `account_id`, `chat_id` (может быть `null` для личных чатов), `ids` | Сообщения удалены |
-| `read` | `account_id`, `chat_id`, `max_id`, `outbox` | Собеседник прочитал ваши сообщения |
+| `read` | `account_id`, `chat_id`, `max_id`, `outbox`, `unread` | `outbox: true` — собеседник прочитал ваши сообщения; `false` — чат прочитан в другом клиенте или панелью, `unread` — сколько осталось непрочитанным |

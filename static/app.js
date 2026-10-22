@@ -74,6 +74,16 @@ const ICONS = {
   archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
   folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
+  dollar: '<path d="M12 2v20"/><path d="M17 6.5c-.8-1.5-2.6-2.5-5-2.5-3 0-5 1.5-5 3.8 0 5.2 10.4 2.8 10.4 8.2 0 2.4-2.2 4-5.4 4-2.6 0-4.6-1.1-5.4-2.8"/>',
+  heart: '<path d="M12 20.5s-8-4.8-8-11A4.5 4.5 0 0 1 12 6.3a4.5 4.5 0 0 1 8 3.2c0 6.2-8 11-8 11z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  tv: '<rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8M10 9.5v5l4-2.5z"/>',
+  play: '<rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/>',
+  bug: '<rect x="7" y="8" width="10" height="12" rx="5"/><path d="M12 12v8M9 5l1.5 3M15 5l-1.5 3M3 13h4M17 13h4M4 8l3 2M20 8l-3 2M4 19l3-2M20 19l-3-2"/>',
+  card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6.5 15h4"/>',
+  wallet: '<path d="M19 7V5.5A1.5 1.5 0 0 0 17.5 4h-12A2.5 2.5 0 0 0 3 6.5v11A2.5 2.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/><path d="M21 9h-5a3 3 0 0 0 0 6h5z"/><path d="M16 12h.01"/>',
+  external: '<path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
 };
 function icon(name, cls = "") {
@@ -176,11 +186,28 @@ function toast(text, err = false) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.hidden = true), err ? 6000 : 2800);
 }
 
+// navigator.clipboard есть только на https и localhost, а панель в локальной сети открыта по http —
+// тогда копируем по-старому, через скрытое поле
+async function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* ниже запасной способ */ }
+  }
+  const area = document.createElement("textarea");
+  area.value = text; area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  const focused = document.activeElement;
+  document.body.appendChild(area); area.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  area.remove(); focused?.focus?.();
+  return ok;
+}
+
 // ---------- подсказки ----------
 let tipEl = null;
 document.addEventListener("mouseover", e => {
   const host = e.target.closest("[data-tip]");
-  if (!host) { tipEl?.remove(); tipEl = null; return; }
+  if (!host || ctxEl) { tipEl?.remove(); tipEl = null; return; }   // при открытом меню подсказки не нужны
   if (tipEl?.dataset.for === host.dataset.tip) return;
   tipEl?.remove();
   const r = host.getBoundingClientRect();
@@ -300,7 +327,7 @@ function renderRail() {
     const unread = S.dialogs.filter(d => d.account_id === a.id && d.unread && !d.muted).length;
     if (unread && S.scope === "") b.insertAdjacentHTML("beforeend", `<span class="badge">${unread > 99 ? "99+" : unread}</span>`);
     b.onclick = () => setScope(a.id);
-    b.oncontextmenu = e => { e.preventDefault(); accountMenu(a.id); };
+    b.oncontextmenu = e => { e.preventDefault(); accountCtxMenu(a, e.clientX, e.clientY); };
     box.appendChild(b);
   }
   $(".rail-item.all").classList.toggle("active", S.scope === "");
@@ -417,6 +444,7 @@ async function openChat(d) {
     if (S.current !== cur) return;
     S.messages = msgs;
     renderMessages(true);
+    if (d.post) setTimeout(() => flashMessage(d.post), 100);
     if (!S.ghost && d.unread) markRead(d);
   } catch (e) { $("#messages").innerHTML = emptyState("alert", e.message); }
   api(chatPath(d.account_id, d.id)).then(info => {
@@ -435,8 +463,32 @@ function renderChatHead() {
   const kind = { user: "пользователь", bot: "бот", group: "группа", channel: "канал" }[c.type] || "";
   const extra = c.members ? `${c.members.toLocaleString("ru")} участн.` : c.username ? `@${c.username}` : kind;
   $(".chat-sub").innerHTML = `<span class="chip" style="--c:${a.color}">${esc(a.name || "")}</span><span>${esc(extra)}</span>`;
-  $("#composer").hidden = !c.can_send;
-  $("#readonly-bar").hidden = c.can_send;
+  // канал или группа, открытые по ссылке без подписки: смотреть можно, писать — нет
+  const guest = c.joined === false && (c.type === "channel" || c.type === "group");
+  $("#composer").hidden = !c.can_send || guest;
+  const bar = $("#readonly-bar");
+  bar.hidden = c.can_send && !guest;
+  bar.innerHTML = guest
+    ? `${icon("eye")}<span>Просмотр без подписки</span><button class="btn primary sm" type="button" id="join-current">${c.type === "channel" ? "Подписаться" : "Вступить"}</button>`
+    : `${icon("lock")} Только чтение — вы не администратор канала`;
+  bar.querySelector("#join-current")?.addEventListener("click", () => joinCurrent(c));
+  const app = $("#bot-app");
+  app.hidden = !c.webapp;
+  if (c.webapp) app.querySelector(".t").textContent = c.webapp.text || "Приложение";
+}
+$("#bot-app").onclick = () => {
+  const c = S.current; if (!c?.webapp) return;
+  openWebApp(c.account_id, { bot: String(c.id), mode: c.webapp.mode, url: c.webapp.url, title: c.title });
+};
+async function joinCurrent(c) {
+  const btn = $("#join-current"); if (btn) btn.disabled = true;
+  try {
+    await api(`api/accounts/${c.account_id}/join`, { method: "POST", body: c.invite ? { link: c.invite } : { chat_id: c.id } });
+    c.joined = true; c.can_send = c.type !== "channel" || c.is_admin;
+    if (isOpen(c)) renderChatHead();
+    toast(c.type === "channel" ? "Вы подписались" : "Вы вступили в группу");
+    reloadDialogsSoon();
+  } catch (e) { toast(e.message, true); if (btn) btn.disabled = false; }
 }
 async function markRead(d) {
   try {
@@ -471,12 +523,12 @@ function mediaHtml(m) {
     default: return `<div class="misc muted">${esc(mediaLabel(md.type))}</div>`;
   }
 }
-const BUTTON_ICON = { url: "link", webview: "link", copy: "copy", switch: "reply", profile: "user" };
+const BUTTON_ICON = { url: "link", webview: "grid", copy: "copy", switch: "reply", profile: "user" };
 function buttonsHtml(m) {
   if (!m.buttons?.length) return "";
   return `<div class="kb">${m.buttons.map((row, r) => `<div class="kb-row">${row.map((b, c) => {
     const ic = BUTTON_ICON[b.kind] ? `<span class="kb-ic">${icon(BUTTON_ICON[b.kind])}</span>` : "";
-    const href = (b.kind === "url" || b.kind === "webview") && safeUrl(b.url);
+    const href = b.kind === "url" && safeUrl(b.url);
     return href
       ? `<a class="kb-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(b.url)}">${esc(b.text)}${ic}</a>`
       : `<button class="kb-btn" data-row="${r}" data-col="${c}"${b.kind === "disabled" ? " disabled" : ""}>${esc(b.text)}${ic}</button>`;
@@ -485,13 +537,14 @@ function buttonsHtml(m) {
 async function pressButton(m, row, col, btnEl) {
   const b = m.buttons?.[row]?.[col];
   if (!b) return;
-  if (b.kind === "copy") { await navigator.clipboard.writeText(b.copy || ""); return toast("Скопировано"); }
+  if (b.kind === "copy") return (await copyText(b.copy || "")) ? toast("Скопировано") : toast("Не удалось скопировать", true);
   if (b.kind === "switch") return toast("Inline-режим бота пока не поддерживается", true);
   if (b.kind === "profile" || b.kind === "buy" || b.kind === "other") return toast("Эта кнопка работает только в приложении Telegram", true);
   btnEl.disabled = true; btnEl.classList.add("loading");
   try {
     const res = await api(`${chatPath(m.account_id, m.chat_id)}/messages/${m.id}/click`, { method: "POST", body: { row, col } });
-    if (res.url) window.open(safeUrl(res.url), "_blank", "noopener");
+    if (res.webapp) openWebApp(m.account_id, { ...res.webapp, chat_id: m.chat_id });
+    else if (res.url) window.open(safeUrl(res.url), "_blank", "noopener");
     if (res.message) res.alert ? alert(res.message) : toast(res.message);
   } catch (e) { toast(e.message, true); }
   btnEl.disabled = false; btnEl.classList.remove("loading");
@@ -627,7 +680,7 @@ async function msgAction(act, m) {
   try {
     if (act === "reply") { S.replyTo = m; S.editing = null; updateReplyBar(); $("#composer-text").focus(); }
     if (act === "edit") { S.editing = m; S.replyTo = null; $("#composer-text").value = m.text; updateReplyBar(); autoGrow(); $("#composer-text").focus(); }
-    if (act === "copy") { await navigator.clipboard.writeText(m.text); toast("Текст скопирован"); }
+    if (act === "copy") (await copyText(m.text)) ? toast("Текст скопирован") : toast("Не удалось скопировать", true);
     if (act === "pin") {
       await api(`${base}/pin?unpin=${m.pinned}`, { method: "POST" });
       replaceMessage({ ...m, pinned: !m.pinned });
@@ -742,6 +795,12 @@ function onEvent(ev) {
     return;
   }
   if (ev.type === "edit") { upsertMessage(ev.message); return; }
+  // Чат прочитан в другом клиенте или самой панелью — Telegram присылает, сколько осталось непрочитанным
+  if (ev.type === "read") {
+    const d = S.dialogs.find(x => x.account_id === ev.account_id && x.id === ev.chat_id);
+    if (d && !ev.outbox && ev.unread != null && d.unread !== ev.unread) { d.unread = ev.unread; renderDialogs(); renderRail(); }
+    return;
+  }
   if (ev.type === "delete") {
     const c = S.current;
     if (c && c.account_id === ev.account_id && (ev.chat_id == null || ev.chat_id === c.id)) {
@@ -771,6 +830,7 @@ function notify(ev) {
 function modal(title, html, onMount) {
   $("#modal-title").textContent = title;
   $("#modal-body").innerHTML = html;
+  $("#modal-body").removeAttribute("data-aid");   // с какого аккаунта открывать ссылки из окна — задаёт само окно
   hydrateIcons($("#modal-body"));
   $("#modal").hidden = false;
   onMount?.($("#modal-body"));
@@ -885,6 +945,22 @@ function accountMenu(aid) {
          sessions: () => sessionsModal(aid), reconnect: () => reconnect(aid), remove: () => removeModal(aid) })[b.dataset.a]();
     };
   });
+}
+// правый клик по аккаунту в рейке
+function accountCtxMenu(a, x, y) {
+  ctxMenu(x, y, [
+    { icon: "check", label: "Прочитать все", run: () => readAllAccount(a.id) },
+    { icon: "link", label: "Вступить по ссылке", run: () => joinModal(a.id) },
+    "sep",
+    { icon: "sliders", label: "Настройки", run: () => accountMenu(a.id) },
+  ], a.name);
+}
+async function readAllAccount(aid) {
+  toast("Отмечаю все чаты прочитанными…");
+  const r = await api(`api/accounts/${aid}/read_all`, { method: "POST" });
+  S.dialogs.forEach(d => { if (d.account_id === aid) { d.unread = 0; d.mentions = 0; } });
+  renderDialogs(); renderRail();
+  toast(r.count ? `Прочитано чатов: ${r.count}` : "Непрочитанных чатов нет");
 }
 async function reconnect(aid) {
   closeModal(); toast("Переподключение…");
@@ -1062,47 +1138,44 @@ function chatInfoModal(c) {
       <div class="info-row"><span data-icon="hash"></span><span class="val muted small">ID ${c.id} · аккаунт «${esc(acc(c.account_id)?.name || "")}»</span></div>
     </div>
     ${editable ? `
+      <div class="section-title">Пригласительная ссылка</div>
+      <div class="invite-row"><input id="invite-link" readonly value="${esc(c.invite || "")}" placeholder="ещё не создана">
+        <button class="btn sm" type="button" id="copy-invite">${icon("copy")} Копировать</button>
+        <button class="btn sm" type="button" id="make-invite">${icon("plus")} Новая</button></div>
       <div class="section-title">Управление</div>
-      <form class="form">
-        <label>Название<input name="title" value="${esc(c.title)}"></label>
-        <label>Описание<textarea name="about" rows="3">${esc(c.about || "")}</textarea></label>
-        <label>Публичная ссылка<input name="username" value="${esc(c.username || "")}" placeholder="пусто — приватный"></label>
-        <div class="error"></div>
-        <div class="row compact"><button class="btn primary sm" type="submit">Сохранить</button>
-          <button class="btn sm" type="button" id="make-invite">${icon("link")} Приглашение</button></div>
-      </form>` : ""}
+      <div class="menu-list" id="manage-list">
+        <button data-m="edit">${icon("edit")} Изменить ${c.type === "channel" ? "канал" : "группу"}</button>
+        ${c.legacy ? "" : `<button data-m="admins">${icon("user")} Администраторы</button>`}
+        <button data-m="settings">${icon("sliders")} Настройки ${c.type === "channel" ? "канала" : "группы"}</button>
+        ${c.is_creator && !c.legacy ? `<button data-m="delete" class="danger">${icon("trash")} Удалить ${c.type === "channel" ? "канал" : "группу"}</button>` : ""}
+      </div>` : ""}
     <div class="section-title">Действия</div>
-    <div class="menu-list">
+    <div class="menu-list" id="chat-actions">
       ${S.ghost ? `<button data-a="read">${icon("check")} Отметить прочитанным</button>` : ""}
       <button data-a="leave" class="danger">${icon(c.type === "user" || c.type === "bot" ? "trash" : "door")} ${c.type === "user" || c.type === "bot" ? "Удалить чат" : "Покинуть"}</button>
     </div>`, root => {
-    const avaBox = root.querySelector("#chat-ava");
-    const chatAvatar = () => avatarEl(c.account_id, c.id, c.title, peerColor(c.id), "lg");
+    root.dataset.aid = c.account_id;
+    root.querySelector("#chat-ava").appendChild(avatarEl(c.account_id, c.id, c.title, peerColor(c.id), "lg"));
     if (editable) {
-      avaBox.appendChild(editableAvatar(chatAvatar(), async f => {
-        const fd = new FormData(); fd.append("file", f);
-        await api(`${chatPath(c.account_id, c.id)}/photo`, { method: "POST", form: fd });
-        bumpAvatar(c.account_id, c.id);
-        avaBox.querySelector(".avatar").replaceWith(chatAvatar());
-        if (isOpen(c)) renderChatHead();
-        renderDialogs();
-        toast("Аватар обновлён");
-      }));
-      formSubmit(root, async fd => {
-        const info = await api(`${chatPath(c.account_id, c.id)}/edit`, { method: "POST", body: Object.fromEntries(fd) });
-        Object.assign(c, info);
-        if (isOpen(c)) { Object.assign(S.current, info); renderChatHead(); }
-        closeModal(); toast("Сохранено"); reloadDialogsSoon();
-      });
+      const inviteInput = root.querySelector("#invite-link");
+      root.querySelector("#copy-invite").onclick = async () => {
+        if (!inviteInput.value) return toast("Ссылки ещё нет — нажмите «Новая»", true);
+        if (await copyText(inviteInput.value)) return toast("Ссылка скопирована");
+        inviteInput.select(); toast("Браузер не дал скопировать — выделил ссылку, нажмите Ctrl+C", true);
+      };
       root.querySelector("#make-invite").onclick = async () => {
         try {
           const { link } = await api(`${chatPath(c.account_id, c.id)}/invite`, { method: "POST" });
-          await navigator.clipboard.writeText(link).catch(() => {});
-          toast(`Ссылка скопирована: ${link}`);
+          c.invite = link; inviteInput.value = link;
+          toast((await copyText(link)) ? "Новая ссылка создана и скопирована" : "Новая ссылка создана");
         } catch (ex) { toast(ex.message, true); }
       };
-    } else avaBox.appendChild(chatAvatar());
-    root.querySelector(".menu-list").onclick = async e => {
+      root.querySelector("#manage-list").onclick = e => {
+        const b = e.target.closest("button"); if (!b) return;
+        ({ edit: () => chatEditModal(c), admins: () => adminsModal(c), settings: () => chatSettingsModal(c), delete: () => deleteChannel(c) })[b.dataset.m]();
+      };
+    }
+    root.querySelector("#chat-actions").onclick = async e => {
       const b = e.target.closest("button"); if (!b) return;
       if (b.dataset.a === "read") { await markRead(c); closeModal(); toast("Отмечено прочитанным"); }
       if (b.dataset.a === "leave" && confirm("Точно?")) {
@@ -1117,6 +1190,427 @@ function chatInfoModal(c) {
   });
 }
 
+// --- управление каналом и группой ---
+const ADMIN_RIGHTS = {
+  channel: [["change_info", "Изменение профиля канала"], ["post_messages", "Публикация сообщений"],
+    ["edit_messages", "Изменение чужих публикаций"], ["delete_messages", "Удаление чужих публикаций"],
+    ["invite_users", "Добавление подписчиков"], ["post_stories", "Публикация историй"],
+    ["edit_stories", "Изменение чужих историй"], ["delete_stories", "Удаление чужих историй"],
+    ["manage_call", "Управление трансляциями"], ["add_admins", "Назначение администраторов"]],
+  group: [["change_info", "Изменение профиля группы"], ["delete_messages", "Удаление сообщений"],
+    ["ban_users", "Блокировка пользователей"], ["invite_users", "Пригласительные ссылки"],
+    ["pin_messages", "Закрепление сообщений"], ["manage_call", "Управление видеочатами"],
+    ["anonymous", "Анонимность"], ["add_admins", "Назначение администраторов"]],
+};
+const ADMIN_OFF_BY_DEFAULT = new Set(["add_admins", "anonymous"]);
+const PERMISSION_LABELS = [["send_plain", "Отправлять текст"], ["send_photos", "Фото"], ["send_videos", "Видео"],
+  ["stickers", "Стикеры и GIF"], ["send_audios", "Музыка"], ["send_docs", "Файлы"], ["send_voices", "Голосовые"],
+  ["send_roundvideos", "Видеосообщения"], ["embed_links", "Предпросмотр ссылок"], ["send_polls", "Опросы"],
+  ["invite_users", "Добавлять участников"], ["pin_messages", "Закреплять сообщения"], ["change_info", "Изменять профиль группы"]];
+const SLOWMODE = [[0, "Выключен"], [10, "10 секунд"], [30, "30 секунд"], [60, "1 минута"], [300, "5 минут"], [900, "15 минут"], [3600, "1 час"]];
+const backBtn = `<button class="btn sm back-btn" type="button">${icon("back")} Назад</button>`;
+
+// права и настройки берём свежими: окно о чате могло открыться раньше, чем догрузилось описание
+async function freshChat(c) {
+  const info = await api(chatPath(c.account_id, c.id));
+  Object.assign(c, info);
+  if (isOpen(c) && S.current !== c) Object.assign(S.current, info);
+  return c;
+}
+function chatEditModal(c) {
+  const chatAvatar = () => avatarEl(c.account_id, c.id, c.title, peerColor(c.id), "lg");
+  modal(`Изменить ${c.type === "channel" ? "канал" : "группу"}`, `${backBtn}
+    <div class="acc-head"><div id="edit-ava"></div><div class="info">
+      <div class="name">${esc(c.title)}</div><div class="muted small">Нажмите на фото, чтобы сменить его</div></div></div>
+    <form class="form">
+      <label>Название<input name="title" value="${esc(c.title)}" required maxlength="128" autocomplete="off"></label>
+      <label>Описание<textarea name="about" rows="4" maxlength="255">${esc(c.about || "")}</textarea></label>
+      <label>Публичная ссылка t.me/…<input name="username" value="${esc(c.username || "")}" placeholder="пусто — приватный" autocomplete="off"></label>
+      <div class="error"></div><button class="btn primary block" type="submit">Сохранить</button>
+    </form>`, root => {
+    root.querySelector(".back-btn").onclick = () => chatInfoModal(c);
+    const avaBox = root.querySelector("#edit-ava");
+    avaBox.appendChild(editableAvatar(chatAvatar(), async f => {
+      const fd = new FormData(); fd.append("file", f);
+      await api(`${chatPath(c.account_id, c.id)}/photo`, { method: "POST", form: fd });
+      bumpAvatar(c.account_id, c.id);
+      avaBox.querySelector(".avatar").replaceWith(chatAvatar());
+      if (isOpen(c)) renderChatHead();
+      renderDialogs();
+      toast("Аватар обновлён");
+    }));
+    formSubmit(root, async fd => {
+      const info = await api(`${chatPath(c.account_id, c.id)}/edit`, { method: "POST", body: Object.fromEntries(fd) });
+      Object.assign(c, info);
+      if (isOpen(c) && S.current !== c) Object.assign(S.current, info);
+      if (isOpen(c)) renderChatHead();
+      toast("Сохранено"); reloadDialogsSoon();
+      chatInfoModal(c);
+    });
+  });
+}
+async function adminsModal(c) {
+  modal("Администраторы", loadingHtml);
+  try {
+    const [, list] = await Promise.all([freshChat(c), api(`${chatPath(c.account_id, c.id)}/admins`)]);
+    renderAdmins(c, list);
+  } catch (e) { $("#modal-body").innerHTML = emptyState("alert", e.message); }
+}
+function renderAdmins(c, list) {
+  const canAdd = c.my_rights?.add_admins;
+  modal(`Администраторы · ${c.title}`, `${backBtn}
+    <div class="admin-list"></div>
+    ${canAdd ? `<button class="btn primary block" id="add-admin" type="button">${icon("plus")} Добавить администратора</button>`
+      : '<p class="hint" style="margin-top:8px">Назначать администраторов может только аккаунт с правом «Назначение администраторов».</p>'}`, root => {
+    root.querySelector(".back-btn").onclick = () => chatInfoModal(c);
+    const box = root.querySelector(".admin-list");
+    for (const a of list) {
+      const el = document.createElement("div");
+      el.className = "list-item" + (a.can_edit ? "" : " static");
+      el.appendChild(avatarEl(c.account_id, a.id, a.name, peerColor(a.id), "sm"));
+      const role = [a.creator ? "владелец" : a.rank || "администратор", a.bot && "бот"].filter(Boolean).join(" · ");
+      el.insertAdjacentHTML("beforeend", `<div class="grow"><b>${esc(a.name)}</b>${a.self ? ' <span class="chip" style="--c:var(--ok)">этот аккаунт</span>' : ""}
+        <div class="small muted">${a.username ? "@" + esc(a.username) + " · " : ""}${esc(role)}</div></div>
+        ${a.can_edit ? `<span class="muted">${icon("chevron")}</span>` : ""}`);
+      if (a.can_edit) el.onclick = () => adminEditModal(c, a);
+      box.appendChild(el);
+    }
+    root.querySelector("#add-admin")?.addEventListener("click", () => adminEditModal(c, null));
+  });
+}
+function adminEditModal(c, a) {
+  const rights = ADMIN_RIGHTS[c.type === "channel" ? "channel" : "group"];
+  const mine = c.my_rights || {};
+  // у нового админа — всё, что может выдать аккаунт; у существующего — его текущие права
+  const on = k => a ? !!a.rights[k] : !!mine[k] && !ADMIN_OFF_BY_DEFAULT.has(k);
+  modal(a ? a.name : "Новый администратор", `${backBtn}
+    <form class="form">
+      ${a ? "" : '<label>Пользователь<input name="user" required placeholder="@username, t.me/username или +79991234567" autocomplete="off"></label>'}
+      <label>Должность<input name="rank" maxlength="16" value="${esc(a?.rank || "")}" placeholder="администратор" autocomplete="off"></label>
+      <div><div class="section-title" style="margin-top:0">Права</div>
+        <div class="checks">${rights.map(([k, label]) => `<label class="opt${mine[k] ? "" : " off"}"${mine[k] ? "" : ' title="У аккаунта нет этого права"'}>
+          <input type="checkbox" data-right="${k}"${on(k) ? " checked" : ""}${mine[k] ? "" : " disabled"}>${label}</label>`).join("")}</div></div>
+      <div class="error"></div>
+      <div class="row"><button class="btn primary" type="submit">${a ? "Сохранить" : "Назначить"}</button>
+        ${a ? '<button class="btn danger" type="button" id="dismiss-admin">Снять права</button>' : ""}</div>
+    </form>`, root => {
+    root.querySelector(".back-btn").onclick = () => adminsModal(c);
+    root.querySelector("[name=user]")?.focus();
+    formSubmit(root, async (fd, form) => {
+      const r = {};
+      form.querySelectorAll("[data-right]").forEach(i => (r[i.dataset.right] = i.checked));
+      const list = await api(`${chatPath(c.account_id, c.id)}/admins`, { method: "POST",
+        body: { user: a ? String(a.id) : fd.get("user"), rights: r, rank: fd.get("rank") || "" } });
+      toast(a ? "Права обновлены" : "Администратор назначен");
+      renderAdmins(c, list);
+    });
+    root.querySelector("#dismiss-admin")?.addEventListener("click", async () => {
+      if (!confirm(`Снять права администратора с «${a.name}»?`)) return;
+      try {
+        renderAdmins(c, await api(`${chatPath(c.account_id, c.id)}/admins/${a.id}`, { method: "DELETE" }));
+        toast("Права сняты");
+      } catch (ex) { toast(ex.message, true); }
+    });
+  });
+}
+async function chatSettingsModal(c) {
+  modal("Настройки", loadingHtml);
+  try { await freshChat(c); } catch (e) { return $("#modal-body").innerHTML = emptyState("alert", e.message); }
+  const s = c.settings || {}, channel = c.type === "channel", supergroup = c.type === "group" && !c.legacy;
+  const check = (name, title, hint, value) => `<label class="check"><input type="checkbox" name="${name}"${value ? " checked" : ""}>
+    <span>${title}<span class="small">${hint}</span></span></label>`;
+  modal(`Настройки · ${c.title}`, `${backBtn}
+    <form class="form">
+      ${channel ? check("signatures", "Подписывать сообщения", "К публикациям добавляется имя администратора", s.signatures) : ""}
+      ${check("noforwards", "Запретить копирование", "Сообщения нельзя переслать, скопировать или сохранить", s.noforwards)}
+      ${supergroup ? check("history", "История чата для новых участников", "Вступившие видят сообщения, отправленные до них", !s.hidden_prehistory) : ""}
+      ${supergroup ? `<label>Медленный режим<select name="slowmode">${SLOWMODE.map(([v, l]) =>
+        `<option value="${v}"${v === s.slowmode ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+        <p class="hint">Как часто участник может отправлять сообщения. На администраторов не действует.</p>` : ""}
+      ${!channel && s.permissions ? `<div><div class="section-title" style="margin-top:0">Участники могут</div>
+        <div class="checks">${PERMISSION_LABELS.map(([k, l]) => `<label class="opt"><input type="checkbox" data-perm="${k}"${s.permissions[k] ? " checked" : ""}>${l}</label>`).join("")}</div></div>` : ""}
+      <div class="error"></div><button class="btn primary block" type="submit">Сохранить</button>
+    </form>`, root => {
+    root.querySelector(".back-btn").onclick = () => chatInfoModal(c);
+    formSubmit(root, async (fd, form) => {
+      // отправляем только изменённое: на «то же самое» Telegram отвечает ошибкой
+      const body = {}, el = n => form.querySelector(`[name=${n}]`);
+      if (el("signatures") && el("signatures").checked !== s.signatures) body.signatures = el("signatures").checked;
+      if (el("noforwards").checked !== s.noforwards) body.noforwards = el("noforwards").checked;
+      if (el("history") && el("history").checked === s.hidden_prehistory) body.hidden_prehistory = !el("history").checked;
+      if (el("slowmode") && Number(el("slowmode").value) !== s.slowmode) body.slowmode = Number(el("slowmode").value);
+      const perms = {};
+      form.querySelectorAll("[data-perm]").forEach(i => (perms[i.dataset.perm] = i.checked));
+      if (Object.keys(perms).some(k => perms[k] !== s.permissions[k])) body.permissions = perms;
+      if (!Object.keys(body).length) return chatInfoModal(c);
+      Object.assign(c, await api(`${chatPath(c.account_id, c.id)}/settings`, { method: "POST", body }));
+      if (isOpen(c) && S.current !== c) Object.assign(S.current, c);
+      toast("Настройки сохранены");
+      chatInfoModal(c);
+    });
+  });
+}
+async function deleteChannel(c) {
+  const word = c.type === "channel" ? "канал" : "группу";
+  if (!confirm(`Удалить ${word} «${c.title}» для всех участников? Это нельзя отменить.`)) return;
+  if (prompt(`Для подтверждения введите название: ${c.title}`) !== c.title) return toast("Название не совпало — ничего не удалено", true);
+  try {
+    await api(chatPath(c.account_id, c.id), { method: "DELETE" });
+    closeModal();
+    if (isOpen(c)) { S.current = null; $("#chat").classList.add("empty"); }
+    S.dialogs = S.dialogs.filter(x => !(x.account_id === c.account_id && x.id === c.id));
+    renderDialogs(); renderRail();
+    toast(c.type === "channel" ? "Канал удалён" : "Группа удалена");
+  } catch (ex) { toast(ex.message, true); }
+}
+
+// ---------- ссылки t.me: открываем в панели ----------
+const TG_HOSTS = ["t.me", "telegram.me", "telegram.dog"];
+function isTgLink(href) {
+  try {
+    const u = new URL(href, location.href);
+    return u.protocol === "tg:" || TG_HOSTS.includes(u.hostname.replace(/^www\./, ""));
+  } catch { return false; }
+}
+// Ссылки на каналы, ботов и приглашения из сообщений и описаний. Ctrl/Cmd+клик — как раньше, в новой вкладке
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[href]");
+  if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || !isTgLink(a.href)) return;
+  if (a.hasAttribute("data-external")) return;
+  const aid = Number(a.closest("[data-aid]")?.dataset.aid) || S.current?.account_id || (S.scope !== "" ? S.scope : 0);
+  e.preventDefault();
+  if (aid) openTgLink(aid, a.href); else pickAccountThen(id => { closeModal(); openTgLink(id, a.href); });
+});
+async function openTgLink(aid, href) {
+  let r;
+  try { r = await api(`api/accounts/${aid}/resolve?link=${encodeURIComponent(href)}`); }
+  catch (e) { return toast(e.message, true); }
+  if (r.kind === "external") { const url = safeUrl(href); if (url) window.open(url, "_blank", "noopener"); return; }
+  if (r.app || r.startapp != null) {
+    return openWebApp(aid, { bot: String(r.id), mode: r.app ? "app" : "main", app: r.app || "", start_param: r.startapp || "", title: r.title });
+  }
+  // свой канал или группа — сразу открываем; остальное — сначала карточка
+  if (r.joined && r.id && (r.type === "channel" || r.type === "group")) { closeModal(); return openFromCard(aid, r); }
+  linkPreviewModal(aid, r);
+}
+function openFromCard(aid, r) {
+  closeModal();
+  openChat({ account_id: aid, id: r.id, title: r.title, type: r.type, username: r.username, unread: 0,
+             joined: r.joined, invite: r.invite, post: r.post, webapp: r.webapp });
+}
+function linkPreviewModal(aid, r) {
+  const kind = { user: "Пользователь", bot: "Бот", group: "Группа", channel: "Канал" }[r.type] || "";
+  const sub = r.members ? `${r.members.toLocaleString("ru")} ${r.type === "channel" ? "подписчиков" : "участников"}` : kind;
+  const join = r.request_needed ? "Подать заявку" : r.type === "channel" ? "Подписаться" : "Вступить";
+  const buttons = [];
+  if (r.type === "channel" || r.type === "group") {
+    if (r.id) buttons.push(["view", r.joined ? "Открыть" : "Посмотреть", r.joined ? "primary" : ""]);
+    if (!r.joined) buttons.push(["join", join, "primary"]);
+  } else if (r.type === "bot") {
+    buttons.push(r.start != null ? ["start", "Запустить", "primary"] : ["view", "Открыть чат", "primary"]);
+    if (r.webapp) buttons.push(["app", r.webapp.text || "Приложение", ""]);
+  } else buttons.push(["view", "Написать", "primary"]);
+  modal(kind, `
+    <div class="acc-head"><div id="lp-ava"></div><div class="info">
+      <div class="name">${esc(r.title)}${r.verified ? ` <span class="verified">${icon("check")}</span>` : ""}</div>
+      <div class="muted small">${esc(sub)}</div></div></div>
+    <div class="info-list">
+      ${r.username ? `<div class="info-row"><span data-icon="at"></span><span class="val">@${esc(r.username)}</span></div>` : ""}
+      ${r.about ? `<div class="info-row"><span data-icon="info"></span><span class="val">${linkify(r.about)}</span></div>` : ""}
+      ${r.post ? `<div class="info-row"><span data-icon="msg"></span><span class="val muted small">Ссылка ведёт на пост № ${r.post}</span></div>` : ""}
+    </div>
+    ${r.request_needed ? '<p class="hint" style="margin:8px 0 0">Вступление по заявке — её должен одобрить администратор.</p>' : ""}
+    <div class="row lp-actions">${buttons.map(([a, label, cls]) => `<button class="btn ${cls}" data-a="${a}">${esc(label)}</button>`).join("")}</div>`, root => {
+    root.dataset.aid = aid;
+    root.querySelector("#lp-ava").appendChild(avatarEl(r.id ? aid : null, r.id, r.title, peerColor(r.id || 0), "lg"));
+    root.querySelector(".lp-actions").onclick = async e => {
+      const b = e.target.closest("button"); if (!b) return;
+      b.disabled = true;
+      try {
+        if (b.dataset.a === "view") openFromCard(aid, r);
+        if (b.dataset.a === "app") { closeModal(); openWebApp(aid, { bot: String(r.id), mode: r.webapp.mode, url: r.webapp.url, title: r.title }); }
+        if (b.dataset.a === "start") {
+          await api(`${chatPath(aid, r.id)}/messages`, { method: "POST", body: { text: r.start ? `/start ${r.start}` : "/start" } });
+          openFromCard(aid, r);
+        }
+        if (b.dataset.a === "join") {
+          const j = await api(`api/accounts/${aid}/join`, { method: "POST", body: r.invite ? { link: r.invite } : { chat_id: r.id } });
+          toast(r.type === "channel" ? "Вы подписались" : "Вы вступили в группу");
+          openFromCard(aid, { ...r, id: j.id, title: j.title, type: j.type, joined: true });
+          reloadDialogsSoon();
+        }
+      } catch (ex) { toast(ex.message, true); b.disabled = false; }
+    };
+  });
+}
+
+// ---------- мини-приложения ботов ----------
+// Приложение работает во фрейме и общается с панелью как с Telegram Web: postMessage({eventType, eventData})
+let WA = null;   // открытое приложение: {aid, opts, res, frame, root, timer, confirmClose}
+function cssColor(name) {
+  const ctx = (cssColor.ctx ||= document.createElement("canvas").getContext("2d"));
+  ctx.fillStyle = "#000"; ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return ctx.fillStyle;   // браузер приводит цвет к #rrggbb
+}
+function webAppTheme() {
+  const t = {
+    bg_color: "--elev", secondary_bg_color: "--surface-2", section_bg_color: "--surface", header_bg_color: "--elev",
+    bottom_bar_bg_color: "--elev", text_color: "--text", hint_color: "--muted", subtitle_text_color: "--muted",
+    section_header_text_color: "--muted", link_color: "--accent", accent_text_color: "--accent", button_color: "--accent",
+    destructive_text_color: "--danger", section_separator_color: "--faint",
+  };
+  const out = { button_text_color: "#ffffff" };
+  for (const [k, v] of Object.entries(t)) out[k] = cssColor(v);
+  return out;
+}
+async function openWebApp(aid, opts) {
+  closeWebApp(true);
+  const root = document.createElement("div");
+  root.className = "webapp-overlay";
+  root.innerHTML = `<div class="webapp" role="dialog" aria-modal="true">
+    <header>
+      <button class="icon-btn sm wa-back" hidden title="Назад">${icon("back")}</button>
+      <div class="wa-title">${esc(opts.title || "Приложение")}</div>
+      <button class="icon-btn sm wa-reload" title="Перезагрузить">${icon("refresh")}</button>
+      <button class="icon-btn sm wa-ext" title="Открыть в новой вкладке">${icon("external")}</button>
+      <button class="icon-btn sm wa-close" title="Закрыть">${icon("x")}</button>
+    </header>
+    <div class="wa-body"><div class="wa-loading"><div class="spinner"></div><div class="small muted wa-slow" hidden>
+      Приложение долго не отвечает. Некоторые запрещают показ внутри других сайтов — откройте его в новой вкладке ${icon("external")}</div></div></div>
+    <div class="wa-buttons" hidden><button class="wa-btn secondary" hidden></button><button class="wa-btn main" hidden></button></div>
+  </div>`;
+  document.body.appendChild(root);
+  WA = { aid, opts, root, res: null, frame: null, timer: null, confirmClose: false };
+  const wa = WA;
+  root.querySelector(".wa-close").onclick = () => closeWebApp();
+  root.querySelector(".wa-back").onclick = () => waSend("back_button_pressed");
+  root.querySelector(".wa-btn.main").onclick = () => waSend("main_button_pressed");
+  root.querySelector(".wa-btn.secondary").onclick = () => waSend("secondary_button_pressed");
+  root.querySelector(".wa-ext").onclick = () => wa.res && window.open(wa.res.url, "_blank", "noopener");
+  root.querySelector(".wa-reload").onclick = () => wa.frame && loadWebAppFrame(wa);
+  root.addEventListener("mousedown", e => { if (e.target === root) closeWebApp(); });
+  try {
+    wa.res = await api(`api/accounts/${aid}/webapp`, { method: "POST", body: {
+      bot: opts.bot, mode: opts.mode, chat_id: opts.chat_id ?? null, url: opts.url || "", app: opts.app || "",
+      start_param: opts.start_param || "", theme: webAppTheme() } });
+  } catch (e) {
+    if (WA !== wa) return;
+    root.querySelector(".wa-body").innerHTML = emptyState("alert", e.message);
+    return;
+  }
+  if (WA !== wa) return;
+  root.querySelector(".wa-title").textContent = wa.res.title || opts.title || "Приложение";
+  loadWebAppFrame(wa);
+  // кнопки под сообщением и меню бота держат сеанс открытым — иначе ответ бота не дойдёт
+  if (wa.res.query_id) {
+    wa.timer = setInterval(() => api(`api/accounts/${aid}/webapp/prolong`, { method: "POST",
+      body: { bot: opts.bot, query_id: wa.res.query_id, chat_id: opts.chat_id ?? null } })
+      .catch(() => clearInterval(wa.timer)), 55000);
+  }
+}
+function loadWebAppFrame(wa) {
+  const body = wa.root.querySelector(".wa-body");
+  body.querySelector("iframe")?.remove();
+  body.querySelector(".wa-loading").hidden = false;
+  const slow = body.querySelector(".wa-slow");
+  slow.hidden = true;
+  clearTimeout(wa.slowTimer); wa.slowTimer = setTimeout(() => (slow.hidden = false), 8000);
+  const frame = document.createElement("iframe");
+  frame.src = wa.res.url;
+  frame.allow = "clipboard-write; fullscreen; camera; microphone; geolocation";
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads");
+  frame.onload = () => setTimeout(() => { if (WA === wa) body.querySelector(".wa-loading").hidden = true; }, 300);
+  body.appendChild(frame);
+  wa.frame = frame;
+}
+function closeWebApp(force = false) {
+  if (!WA) return;
+  if (!force && WA.confirmClose && !confirm("Закрыть приложение? Изменения могут не сохраниться.")) return;
+  clearInterval(WA.timer); clearTimeout(WA.slowTimer);
+  WA.root.remove(); WA = null;
+}
+function waSend(eventType, eventData = {}) {
+  WA?.frame?.contentWindow?.postMessage(JSON.stringify({ eventType, eventData }), "*");
+}
+function waButton(kind, p) {
+  const b = WA.root.querySelector(`.wa-btn.${kind}`);
+  b.hidden = !p.is_visible || !p.text;
+  b.disabled = p.is_active === false;
+  b.classList.toggle("loading", !!p.is_progress_visible);
+  b.textContent = p.text || "";
+  // цвета задаёт само приложение; без них — цвета панели из CSS
+  b.style.background = p.color || ""; b.style.color = p.text_color || "";
+  WA.root.querySelector(".wa-buttons").hidden = [...WA.root.querySelectorAll(".wa-btn")].every(x => x.hidden);
+}
+function waPopup(p) {
+  const buttons = p.buttons?.length ? p.buttons : [{ id: "", type: "close" }];
+  const text = [p.title, p.message].filter(Boolean).join("\n\n");
+  let id;
+  if (buttons.length === 1) { alert(text); id = buttons[0].id; }
+  else {
+    const ok = buttons.find(b => b.type !== "cancel" && b.type !== "close") || buttons[0];
+    const cancel = buttons.find(b => b !== ok);
+    id = confirm(text) ? ok.id : cancel?.id ?? "";
+  }
+  waSend("popup_closed", { button_id: id });
+}
+const WA_UNSUPPORTED = {
+  web_app_request_phone: ["phone_requested", { status: "cancelled" }, "Номер телефона из панели не передаётся"],
+  web_app_request_write_access: ["write_access_requested", { status: "cancelled" }],
+  web_app_open_scan_qr_popup: ["scan_qr_popup_closed", {}, "Сканер QR в панели не поддерживается"],
+  web_app_check_home_screen: ["home_screen_checked", { status: "unsupported" }],
+  web_app_biometry_get_info: ["biometry_info_received", { available: false }],
+  web_app_check_location: ["location_checked", { available: false }],
+};
+function onWebAppEvent(type, d) {
+  const frame = WA.frame;
+  switch (type) {
+    case "web_app_ready": WA.root.querySelector(".wa-loading").hidden = true; break;
+    case "web_app_close": closeWebApp(true); break;
+    case "web_app_request_theme": waSend("theme_changed", { theme_params: webAppTheme() }); break;
+    case "web_app_request_viewport":
+      waSend("viewport_changed", { height: frame.clientHeight, width: frame.clientWidth, is_expanded: true, is_state_stable: true }); break;
+    case "web_app_request_safe_area": waSend("safe_area_changed", { top: 0, bottom: 0, left: 0, right: 0 }); break;
+    case "web_app_request_content_safe_area": waSend("content_safe_area_changed", { top: 0, bottom: 0, left: 0, right: 0 }); break;
+    case "web_app_setup_main_button": waButton("main", d); break;
+    case "web_app_setup_secondary_button": waButton("secondary", d); break;
+    case "web_app_setup_back_button": WA.root.querySelector(".wa-back").hidden = !d.is_visible; break;
+    case "web_app_setup_closing_behavior": WA.confirmClose = !!d.need_confirmation; break;
+    case "web_app_open_link": { const url = safeUrl(d.url); if (url) window.open(url, "_blank", "noopener"); break; }
+    case "web_app_open_tg_link": { const aid = WA.aid; closeWebApp(true); openTgLink(aid, `https://t.me${d.path_full || ""}`); break; }
+    case "web_app_open_popup": waPopup(d); break;
+    case "web_app_read_text_from_clipboard": waSend("clipboard_text_received", { req_id: d.req_id, data: null }); break;
+    case "web_app_request_fullscreen":
+      WA.root.classList.add("full"); waSend("fullscreen_changed", { is_fullscreen: true }); break;
+    case "web_app_exit_fullscreen":
+      WA.root.classList.remove("full"); waSend("fullscreen_changed", { is_fullscreen: false }); break;
+    case "web_app_open_invoice":
+      waSend("invoice_closed", { slug: d.slug, status: "cancelled" });
+      toast("Оплата в мини-приложениях из панели не поддерживается — откройте его в Telegram", true); break;
+    case "web_app_data_send": case "web_app_switch_inline_query": case "web_app_send_prepared_message": case "web_app_share_to_story":
+      toast("Это действие мини-приложения работает только в Telegram", true); break;
+    default: {
+      const u = WA_UNSUPPORTED[type];
+      if (u) { waSend(u[0], u[1]); if (u[2]) toast(u[2], true); }
+      else if (/^web_app_(device|secure)_storage_/.test(type)) {
+        waSend(type.includes("secure") ? "secure_storage_failed" : "device_storage_failed", { req_id: d.req_id, error: "UNSUPPORTED" });
+      } else if (type === "web_app_invoke_custom_method") {
+        waSend("custom_method_invoked", { req_id: d.req_id, error: "UNSUPPORTED" });
+      }
+    }
+  }
+}
+window.addEventListener("message", e => {
+  if (!WA?.frame || e.source !== WA.frame.contentWindow) return;
+  let msg;
+  try { msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch { return; }
+  if (!msg?.eventType) return;
+  let data = msg.eventData ?? {};
+  if (typeof data === "string") { try { data = JSON.parse(data); } catch { data = {}; } }
+  onWebAppEvent(msg.eventType, data || {});
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && WA && $("#modal").hidden) closeWebApp(); });
+
 // ---------- меню чата (правый клик / долгое нажатие) ----------
 let ctxEl = null;
 function closeCtx() { ctxEl?.remove(); ctxEl = null; }
@@ -1128,6 +1622,7 @@ $("#dialog-list").addEventListener("scroll", closeCtx, { passive: true });
 // items: [{icon, label, run, danger, checked, keepOpen}] или "sep"
 function ctxMenu(x, y, items, title = "") {
   closeCtx();
+  tipEl?.remove(); tipEl = null;
   ctxEl = document.createElement("div");
   ctxEl.className = "ctx-menu";
   ctxEl.setAttribute("role", "menu");
@@ -1297,6 +1792,41 @@ function setFolder(id) {
   else { S.dialogs = []; loadDialogs(); }
 }
 
+// ---------- поддержка проекта ----------
+// Те же ссылки, что в разделах README «Поддержка» и «Поддержать». Цвета — фирменные цвета площадок
+const REPO = "https://github.com/Dosash/web_panel_acc";
+const SUPPORT_DONATE = [
+  ["https://pay.cloudtips.ru/p/894f4248", "card", "Банковская карта", "CloudTips — любая сумма, без регистрации"],
+  ["https://t.me/send?start=IVoQmPAfgWnM", "wallet", "Telegram-кошелёк", "Криптовалюта через @send"],
+];
+const SUPPORT_LINKS = [
+  [`${REPO}/issues`, "bug", "GitHub Issues", "Ошибки, идеи и вопросы по панели", "#8b949e"],
+  ["https://dosash.ru", "globe", "dosash.ru", "Сайт автора", "#00b8d4"],
+  ["https://twitch.tv/dosash", "tv", "Twitch", "twitch.tv/dosash", "#9146ff"],
+  ["https://kick.com/dosash1", "tv", "Kick", "kick.com/dosash1", "#53fc18"],
+  ["https://youtube.com/@dosash", "play", "YouTube", "youtube.com/@dosash", "#ff0000"],
+  ["https://discord.gg/WubwwU2bpM", "msg", "Discord", "Сервер RedImpact", "#5865f2"],
+];
+function supportModal() {
+  const link = (url, inner, cls) => `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-external>${inner}</a>`;
+  modal("Поддержка", `
+    <div class="support-head"><div class="brand-mark" data-icon="plane"></div><div>
+      <div class="name">TG Panel${S.version ? ` <span class="muted small">${esc(S.version)}</span>` : ""}</div>
+      <div class="muted small">Автор — ${link("https://github.com/Dosash", "Dosash", "")} · лицензия MIT · ${link(REPO, "исходный код", "")}</div>
+    </div></div>
+    <div class="section-title">${icon("heart")} Поддержать</div>
+    <p class="support-text">Если панель пригодилась — можно поблагодарить автора. Это не обязательно, но очень приятно и помогает развивать проект.</p>
+    <div class="donate">${SUPPORT_DONATE.map(([url, ic, title, sub]) =>
+      link(url, `<span class="ti">${icon(ic)}</span><span><b>${title}</b><span class="small">${sub}</span></span>`, "donate-card")).join("")}</div>
+    <p class="support-text">Ещё помогают ⭐ на GitHub и ссылка на автора или репозиторий — в описании своего проекта или в канале.</p>
+    ${link(REPO, `${icon("star")} Звезда на GitHub`, "btn block")}
+    <div class="section-title">Поддержка</div>
+    <p class="support-text">Вопросы, идеи и сообщения об ошибках — в Issues или на любой из площадок:</p>
+    <div class="support-links">${SUPPORT_LINKS.map(([url, ic, title, sub, color]) =>
+      link(url, `<span class="si" style="--c:${color}">${icon(ic)}</span><span><b>${title}</b><span class="small muted">${sub}</span></span>${icon("external")}`, "support-link")).join("")}</div>`);
+}
+$("#support").onclick = supportModal;
+
 // ---------- невидимка и тема ----------
 function renderGhost() {
   const b = $("#toggle-ghost");
@@ -1323,6 +1853,7 @@ async function start() {
   try { sess = await api("api/session"); } catch { return showLogin(); }
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
+  S.version = sess.version || "";
   $("#hub-link").hidden = !sess.hub_url;
   if (sess.hub_url) $("#hub-link").href = sess.hub_url;
   await Promise.all([loadAccounts(), loadFolders()]);

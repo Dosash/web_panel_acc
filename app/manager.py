@@ -40,6 +40,13 @@ def peer_type(entity) -> str:
     return "group"
 
 
+def username(entity) -> str | None:
+    """Основное @имя. У каналов с коллекционными именами (Fragment) поле username пустое — они в usernames."""
+    if getattr(entity, "username", None):
+        return entity.username
+    return next((u.username for u in getattr(entity, "usernames", None) or [] if u.active), None)
+
+
 def display_name(entity) -> str:
     if entity is None:
         return ""
@@ -227,7 +234,7 @@ def dialog_dict(account_id: int, d) -> dict:
         "id": d.id,
         "title": display_name(entity),
         "type": peer_type(entity),
-        "username": getattr(entity, "username", None),
+        "username": username(entity),
         "unread": d.unread_count,
         "mentions": d.unread_mentions_count,
         "pinned": d.pinned,
@@ -372,10 +379,14 @@ class Manager:
             await self.hub.send({"type": "delete", "account_id": aid, "chat_id": event.chat_id,
                                  "ids": event.deleted_ids})
 
-        @client.on(events.MessageRead(inbox=False))
+        @client.on(events.MessageRead())
         async def on_read(event):
+            if event.contents:
+                return
+            # Входящие прочитаны в другом клиенте (телефон, Desktop) — Telegram сообщает, сколько осталось
+            unread = getattr(getattr(event, "original_update", None), "still_unread_count", None)
             await self.hub.send({"type": "read", "account_id": aid, "chat_id": event.chat_id,
-                                 "max_id": event.max_id, "outbox": True})
+                                 "max_id": event.max_id, "outbox": event.outbox, "unread": unread})
 
     # ---------- помощники ----------
 
@@ -391,6 +402,15 @@ class Manager:
             await client.get_dialogs(limit=None)
             live.dialogs_loaded = True
             return await client.get_input_entity(chat_id)
+
+    async def read_chat(self, account_id: int, entity, max_id: int = 0) -> None:
+        """Отмечает чат прочитанным. max_id=0 («всё») каналы молча игнорируют — передаём id последнего сообщения."""
+        client = self.client(account_id)
+        if not max_id:
+            last = await client.get_messages(entity, limit=1)
+            max_id = last[0].id if last else 0
+        if max_id:
+            await client.send_read_acknowledge(entity, max_id=max_id)
 
     def peer_id(self, entity) -> int:
         return utils.get_peer_id(entity)
