@@ -13,8 +13,6 @@ const S = {
   editing: null,
   unseen: 0,                // новые сообщения, пришедшие пока лента прокручена вверх
   ghost: readPref("ghost", "1") === "1",
-  lan: null,                // веб-панель из локальной сети: {name, url, proxy_port} из /api/session
-  view: "chats",            // chats | lan
 };
 const COLORS = ["#4f8cff", "#2ecc8f", "#f5a524", "#f2555a", "#a36cf7",
                 "#12a4b8", "#f76b15", "#d6409f", "#8d9b2a", "#6e56cf"];
@@ -76,8 +74,6 @@ const ICONS = {
   archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
   folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
-  server: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/>',
-  external: '<path d="M14 3h7v7"/><path d="M21 3 10 14"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
 };
 function icon(name, cls = "") {
   const body = ICONS[name] || "";
@@ -295,7 +291,7 @@ function renderRail() {
   box.innerHTML = "";
   for (const a of S.accounts.values()) {
     const b = document.createElement("button");
-    b.className = "rail-item acc" + (S.view === "chats" && String(S.scope) === String(a.id) ? " active" : "");
+    b.className = "rail-item acc" + (String(S.scope) === String(a.id) ? " active" : "");
     b.dataset.tip = `${a.name}\n${accountLine(a) || a.full_name || ""}\n${statusText(a)}`.replace(/\n+/g, "\n").trim();
     b.style.setProperty("--c", a.color);
     b.appendChild(avatarEl(a.status === "online" ? a.id : null, "me", a.full_name || a.name, a.color));
@@ -306,8 +302,7 @@ function renderRail() {
     b.oncontextmenu = e => { e.preventDefault(); accountMenu(a.id); };
     box.appendChild(b);
   }
-  $(".rail-item.all").classList.toggle("active", S.view === "chats" && S.scope === "");
-  $("#lan-open").classList.toggle("active", S.view === "lan");
+  $(".rail-item.all").classList.toggle("active", S.scope === "");
   renderScope();
 }
 function renderScope() {
@@ -319,52 +314,12 @@ function renderScope() {
 }
 $(".rail-item.all").onclick = () => setScope("");
 function setScope(id) {
-  const scope = id === "" ? "" : Number(id);
-  const fromLan = S.view === "lan";
-  if (fromLan) showLan(false);
-  if (fromLan && scope === S.scope) return;  // вернулись к тому же списку — он обновлялся по событиям
-  S.scope = scope;
+  S.scope = id === "" ? "" : Number(id);
   S.dialogs = [];
   renderRail();
   loadDialogs();
 }
 $("#account-menu").onclick = () => accountMenu(S.scope);
-
-// ---------- веб-панель из локальной сети ----------
-function lanFrameUrl(p) {
-  // Сайт запрещает встраивание, поэтому iframe смотрит на прокси TG Panel на отдельном порту
-  // (app/lan_proxy.py). Со страницы по https iframe на http заблокирует браузер — тогда новая вкладка.
-  if (!p.proxy_port || location.protocol !== "http:") return "";
-  const u = new URL(p.url);
-  return `http://${location.hostname}:${p.proxy_port}${u.pathname}${u.search}`;
-}
-function setupLan(p) {
-  S.lan = p || null;
-  $("#lan-open").hidden = !S.lan;
-  if (!S.lan) { if (S.view === "lan") showLan(false); return; }
-  const host = new URL(S.lan.url).host;
-  $("#lan-open").dataset.tip = `${S.lan.name}\n${host}`;
-  $("#lan-open").setAttribute("aria-label", S.lan.name);
-  $("#lan-title").textContent = S.lan.name;
-  $("#lan-sub").textContent = `${host} · локальная сеть`;
-  $("#lan-tab").href = S.lan.url;
-}
-function showLan(on) {
-  S.view = on ? "lan" : "chats";
-  $("#app").classList.toggle("lan-mode", on);
-  $("#lan").hidden = !on;
-  renderRail();
-}
-$("#lan-open").onclick = () => {
-  const src = lanFrameUrl(S.lan);
-  if (!src) { window.open(S.lan.url, "_blank", "noopener"); return; }
-  const f = $("#lan-frame");
-  // src ставим один раз: при возврате из чатов панель остаётся на той же странице
-  if (f.dataset.src !== src) { f.dataset.src = src; f.src = src; }
-  showLan(true);
-};
-$("#lan-back").onclick = () => showLan(false);
-$("#lan-reload").onclick = () => { const f = $("#lan-frame"); f.src = f.dataset.src || "about:blank"; };
 
 // ---------- диалоги ----------
 let dialogsReq = 0;
@@ -1364,7 +1319,6 @@ async function start() {
   try { sess = await api("/api/session"); } catch { return showLogin(); }
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
-  setupLan(sess.lan_panel);
   await Promise.all([loadAccounts(), loadFolders()]);
   await loadDialogs();
   if (!started) {

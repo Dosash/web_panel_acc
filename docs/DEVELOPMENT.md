@@ -23,7 +23,6 @@ app/
   storage.py       SQLite + шифрование сессий
   tdata_import.py  tdata → StringSession (opentele)
   manager.py       клиенты Telethon, события, сериализация
-  lan_proxy.py     прокси веб-панели из локальной сети (отдельный порт)
   main.py          FastAPI: REST, WebSocket, статика
 static/
   index.html       каркас страницы
@@ -88,11 +87,6 @@ data/              база, ключи, кэш (в .gitignore)
 - **Большие числа.** `hash` сеансов — int64, передаётся строкой (в JS теряется точность).
 - **Flood wait.** Массовые запросы к Telegram (аватары, медиа, диалоги со всех аккаунтов) могут
   вызвать ограничение. Telethon сам ждёт до 30 секунд (`flood_sleep_threshold`), дольше — ошибка 400.
-
-- **Веб-панель из локальной сети** открывается в iframe через прокси на отдельном порту, а не по пути
-  `/lan/...`: в JS её под-панелей зашиты абсолютные пути (`/api/...`, `/parser/assets/...`), и `/api`
-  пересекается с API TG Panel. Вторая копия панели для проверки должна брать другой порт прокси:
-  `LAN_PANEL_PROXY_PORT=8091 .venv/bin/uvicorn app.main:app --port 8090`.
 
 ## Отладка
 

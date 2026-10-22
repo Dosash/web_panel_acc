@@ -28,7 +28,6 @@
   <main id="app" class="app" hidden>
     <nav class="rail">
       <div class="brand-mark" data-icon="plane" title="TG Panel"></div>
-      <button id="lan-open" class="rail-item lan" hidden><span data-icon="server"></span></button>
       <button class="rail-item all active" data-account="" data-tip="Все аккаунты"><span data-icon="layers"></span></button>
       <div class="rail-sep"></div>
       <div id="rail-accounts" class="rail-accounts"></div>
@@ -90,21 +89,6 @@
         </form>
         <div id="readonly-bar" class="readonly-bar" hidden><span data-icon="lock"></span> Только чтение — вы не администратор канала</div>
       </div>
-    </section>
-
-    <!-- Веб-панель из локальной сети (LAN_PANEL_URL) -->
-    <section id="lan" class="lan" hidden>
-      <header class="chat-head">
-        <button id="lan-back" class="icon-btn back" title="Назад"><span data-icon="back"></span></button>
-        <div class="lan-icon" data-icon="server"></div>
-        <div class="chat-meta">
-          <div id="lan-title" class="chat-title"></div>
-          <div id="lan-sub" class="chat-sub"></div>
-        </div>
-        <button id="lan-reload" class="icon-btn" title="Обновить"><span data-icon="refresh"></span></button>
-        <a id="lan-tab" class="icon-btn" target="_blank" rel="noopener" title="Открыть в новой вкладке"><span data-icon="external"></span></a>
-      </header>
-      <iframe id="lan-frame" class="lan-frame" title="Панель локальной сети" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
     </section>
   </main>
 
