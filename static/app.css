@@ -612,6 +612,20 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
+/* ================= Панель из локальной сети ================= */
+.app.lan-mode { grid-template-columns: 76px minmax(0, 1fr); }
+.app.lan-mode > .sidebar, .app.lan-mode > .chat { display: none; }
+.lan {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; margin-top: 8px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-right: 0; border-bottom: 0; border-radius: 22px 0 0 0;
+}
+.lan[hidden] { display: none; }
+.lan-icon {
+  width: 40px; height: 40px; border-radius: 12px; flex: none; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent);
+}
+.lan-frame { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: var(--surface); }
+
 /* ================= Телефон ================= */
 @media (max-width: 860px) {
   .app { grid-template-columns: 64px minmax(0, 1fr); }
@@ -622,6 +636,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   .sidebar { border-radius: 18px 0 0 0; }
   .chat { position: fixed; inset: 0; z-index: 10; margin: 0; border: 0; }
   .chat.empty { display: none; }
+  .app.lan-mode { grid-template-columns: 64px minmax(0, 1fr); }
+  .lan { position: fixed; inset: 0; z-index: 10; margin: 0; border: 0; border-radius: 0; }
   .back { display: inline-grid; }
   .chat-head { padding: 8px 10px; }
   .messages { padding: 12px 10px 8px; }

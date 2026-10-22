@@ -19,7 +19,24 @@
 |---|---|---|---|
 | POST | `/api/login` | `{password}` | `{ok}` + cookie |
 | POST | `/api/logout` | — | `{ok}` |
-| GET | `/api/session` | — | `{ok, auth}` — `auth: false`, если пароль отключён |
+| GET | `/api/session` | — | `{ok, auth, lan_panel}` — `auth: false`, если пароль отключён |
+
+`lan_panel` — веб-панель из локальной сети для кнопки в рейке: `{name, url, proxy_port}` или `null`,
+если `LAN_PANEL_URL` пуст. `proxy_port` — порт прокси для iframe; `0` — прокси не запущен
+(выключен или порт занят), панель открывается в новой вкладке по `url`.
+
+## Прокси веб-панели из локальной сети
+
+Отдельный сервер в том же процессе на `HOST:LAN_PANEL_PROXY_PORT` (не на основном порту).
+Любой путь и метод проксируется на `LAN_PANEL_URL` как есть: query, тело, cookies, заголовки
+(`Origin`/`Referer` переписываются на адрес сервера). Из ответа убираются `X-Frame-Options`,
+`Strict-Transport-Security` и директива `frame-ancestors` в CSP; абсолютные редиректы на сервер
+становятся относительными, у `Set-Cookie` убирается `Domain`. WebSocket не проксируется.
+
+| Код | Когда |
+|---|---|
+| 401 | Нет cookie `panel_auth` (cookie привязана к хосту, порт не важен) |
+| 502 | Сервер панели не отвечает |
 
 ## Аккаунты
 

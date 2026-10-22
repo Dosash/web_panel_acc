@@ -15,8 +15,9 @@ from pydantic import BaseModel
 from telethon import functions, types
 from telethon.errors import BotResponseTimeoutError, RPCError
 
-from . import storage
-from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, PANEL_PASSWORD, TMP_DIR
+from . import lan_proxy, storage
+from .config import (BASE_DIR, CACHE_DIR, COOKIE_SECRET, HOST, LAN_PANEL_NAME, LAN_PANEL_PROXY_PORT,
+                     LAN_PANEL_URL, PANEL_PASSWORD, TMP_DIR)
 from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type
 from .tdata_import import ImportError_, convert, save_upload
 
@@ -30,16 +31,23 @@ COOKIE_AGE = 30 * 24 * 3600
 
 
 AUTH_ENABLED = bool(PANEL_PASSWORD)
+lan: lan_proxy.LanProxy | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global lan
     if not AUTH_ENABLED:
         log.warning("PANEL_PASSWORD пуст — панель открыта без пароля. Не выставляйте её в интернет.")
     storage.init_db()
+    if LAN_PANEL_URL and LAN_PANEL_PROXY_PORT:
+        lan = lan_proxy.start(LAN_PANEL_URL, HOST, LAN_PANEL_PROXY_PORT,
+                              lambda r: is_authed(r.cookies.get(COOKIE)), COOKIE)
     task = asyncio.create_task(manager.start_all())
     yield
     task.cancel()
+    if lan:
+        await lan.stop()
     await manager.stop_all()
 
 
@@ -123,7 +131,10 @@ async def logout():
 
 @app.get("/api/session", dependencies=[Depends(auth)])
 async def session():
-    return {"ok": True, "auth": AUTH_ENABLED}
+    # proxy_port 0 — прокси нет (выключен или порт занят), панель открывается в новой вкладке
+    lan_panel = {"name": LAN_PANEL_NAME, "url": LAN_PANEL_URL,
+                 "proxy_port": lan.port if lan else 0} if LAN_PANEL_URL else None
+    return {"ok": True, "auth": AUTH_ENABLED, "lan_panel": lan_panel}
 
 
 # ---------- аккаунты ----------
