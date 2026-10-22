@@ -226,10 +226,34 @@ function avatarEl(aid, peer, name, color, cls = "") {
   el.style.setProperty("--c", color || COLORS[0]);
   el.textContent = initials(name);
   if (aid != null) {
-    el.dataset.src = `/api/accounts/${aid}/avatar/${peer}`;
+    const v = avatarVersion.get(key(aid, peer));
+    el.dataset.src = `/api/accounts/${aid}/avatar/${peer}${v ? `?v=${v}` : ""}`;
     if (!avatarMissing.has(el.dataset.src)) avatarObserver.observe(el);
   }
   return el;
+}
+// Браузер кэширует аватар на час — после смены фото добавляем к адресу версию
+const avatarVersion = new Map();
+function bumpAvatar(aid, peer) {
+  avatarMissing.delete(`/api/accounts/${aid}/avatar/${peer}`);
+  avatarVersion.set(key(aid, peer), Date.now());
+}
+// Аватар с карандашом: нажатие открывает выбор картинки, onFile загружает её
+function editableAvatar(avatarNode, onFile) {
+  const wrap = document.createElement("label");
+  wrap.className = "ava-edit";
+  wrap.title = "Сменить аватар";
+  wrap.append(avatarNode);
+  wrap.insertAdjacentHTML("beforeend", `<span class="pen">${icon("edit")}</span><input type="file" accept="image/*" hidden>`);
+  wrap.querySelector("input").onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    wrap.classList.add("loading");
+    try { await onFile(f); } catch (ex) { toast(ex.message, true); }
+    wrap.classList.remove("loading");
+  };
+  return wrap;
 }
 
 // ---------- вход ----------
@@ -914,24 +938,23 @@ async function profileModal(aid) {
   modal("Профиль Telegram", `
     <form class="form">
       <div class="acc-head"><div id="me-ava"></div><div class="info">
-        <label class="btn">${icon("image")} Сменить фото<input type="file" id="me-photo" accept="image/*" hidden></label>
-        <div class="hint" style="margin-top:8px">+${esc(p.phone)}${p.premium ? " · Premium" : ""}</div></div></div>
+        <div class="name">${esc([p.first_name, p.last_name].filter(Boolean).join(" "))}</div>
+        <div class="muted small">+${esc(p.phone)}${p.premium ? " · Premium" : ""}</div></div></div>
       <div class="row"><label>Имя<input name="first_name" value="${esc(p.first_name)}" required></label>
         <label>Фамилия<input name="last_name" value="${esc(p.last_name)}"></label></div>
       <label>Имя пользователя<input name="username" value="${esc(p.username)}" placeholder="без @"></label>
       <label>О себе<textarea name="about" rows="3" maxlength="140">${esc(p.about)}</textarea></label>
       <div class="error"></div><button class="btn primary block" type="submit">Сохранить</button>
     </form>`, root => {
-    root.querySelector("#me-ava").appendChild(avatarEl(aid, "me", p.first_name, acc(aid).color, "lg"));
-    root.querySelector("#me-photo").onchange = async e => {
-      const f = e.target.files[0]; if (!f) return;
+    const box = root.querySelector("#me-ava");
+    box.appendChild(editableAvatar(avatarEl(aid, "me", p.first_name, acc(aid).color, "lg"), async f => {
       const fd = new FormData(); fd.append("file", f);
-      try {
-        await api(`/api/accounts/${aid}/photo`, { method: "POST", form: fd });
-        avatarMissing.delete(`/api/accounts/${aid}/avatar/me`);
-        toast("Фото обновлено"); profileModal(aid); renderRail();
-      } catch (ex) { toast(ex.message, true); }
-    };
+      await api(`/api/accounts/${aid}/photo`, { method: "POST", form: fd });
+      bumpAvatar(aid, "me");
+      box.querySelector(".avatar").replaceWith(avatarEl(aid, "me", p.first_name, acc(aid).color, "lg"));
+      renderRail();
+      toast("Аватар обновлён");
+    }));
     formSubmit(root, async fd => {
       await api(`/api/accounts/${aid}/profile`, { method: "POST", body: Object.fromEntries(fd) });
       toast("Профиль сохранён"); closeModal(); loadAccounts();
@@ -1021,27 +1044,29 @@ $("#chat-info").onclick = () => {
         <label>Описание<textarea name="about" rows="3">${esc(c.about || "")}</textarea></label>
         <label>Публичная ссылка<input name="username" value="${esc(c.username || "")}" placeholder="пусто — приватный"></label>
         <div class="error"></div>
-        <div class="row"><button class="btn primary" type="submit">Сохранить</button>
-          <label class="btn">${icon("image")} Фото<input type="file" id="chat-photo" accept="image/*" hidden></label>
-          <button class="btn" type="button" id="make-invite">${icon("link")} Приглашение</button></div>
+        <div class="row compact"><button class="btn primary sm" type="submit">Сохранить</button>
+          <button class="btn sm" type="button" id="make-invite">${icon("link")} Приглашение</button></div>
       </form>` : ""}
     <div class="section-title">Действия</div>
     <div class="menu-list">
       ${S.ghost ? `<button data-a="read">${icon("check")} Отметить прочитанным</button>` : ""}
       <button data-a="leave" class="danger">${icon(c.type === "user" || c.type === "bot" ? "trash" : "door")} ${c.type === "user" || c.type === "bot" ? "Удалить чат" : "Покинуть"}</button>
     </div>`, root => {
-    root.querySelector("#chat-ava").appendChild(avatarEl(c.account_id, c.id, c.title, peerColor(c.id), "lg"));
+    const avaBox = root.querySelector("#chat-ava");
+    const chatAvatar = () => avatarEl(c.account_id, c.id, c.title, peerColor(c.id), "lg");
     if (editable) {
+      avaBox.appendChild(editableAvatar(chatAvatar(), async f => {
+        const fd = new FormData(); fd.append("file", f);
+        await api(`${chatPath(c.account_id, c.id)}/photo`, { method: "POST", form: fd });
+        bumpAvatar(c.account_id, c.id);
+        avaBox.querySelector(".avatar").replaceWith(chatAvatar());
+        renderChatHead(); renderDialogs();
+        toast("Аватар обновлён");
+      }));
       formSubmit(root, async fd => {
         const info = await api(`${chatPath(c.account_id, c.id)}/edit`, { method: "POST", body: Object.fromEntries(fd) });
         Object.assign(S.current, info); renderChatHead(); closeModal(); toast("Сохранено"); reloadDialogsSoon();
       });
-      root.querySelector("#chat-photo").onchange = async e => {
-        const f = e.target.files[0]; if (!f) return;
-        const fd = new FormData(); fd.append("file", f);
-        try { await api(`${chatPath(c.account_id, c.id)}/photo`, { method: "POST", form: fd }); toast("Фото обновлено"); }
-        catch (ex) { toast(ex.message, true); }
-      };
       root.querySelector("#make-invite").onclick = async () => {
         try {
           const { link } = await api(`${chatPath(c.account_id, c.id)}/invite`, { method: "POST" });
@@ -1049,7 +1074,7 @@ $("#chat-info").onclick = () => {
           toast(`Ссылка скопирована: ${link}`);
         } catch (ex) { toast(ex.message, true); }
       };
-    }
+    } else avaBox.appendChild(chatAvatar());
     root.querySelector(".menu-list").onclick = async e => {
       const b = e.target.closest("button"); if (!b) return;
       if (b.dataset.a === "read") { await markRead(c); closeModal(); toast("Отмечено прочитанным"); }
