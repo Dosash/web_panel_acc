@@ -10,7 +10,9 @@ APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
 
 if [ "${1:-}" = "--uninstall" ]; then
-  rm -rf "$DEST" "$BIN/tg-panel" "$APPS/tg-panel.desktop" "$ICONS/tg-panel.png"
+  # и автозапуск, если его включали из трея — иначе при входе запускался бы удалённый файл
+  rm -rf "$DEST" "$BIN/tg-panel" "$APPS/tg-panel.desktop" "$ICONS/tg-panel.png" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/tg-panel.desktop"
   echo "TG Panel удалена. Данные остались в ~/.local/share/tg-panel"
   exit 0
 fi

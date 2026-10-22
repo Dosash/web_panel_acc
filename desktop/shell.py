@@ -293,8 +293,15 @@ class ShellWindow(QMainWindow):
             (QKeySequence.Quit, self.quit),
             ("Ctrl+Q", self.quit),
         ]
+        # стандартная клавиша на одной ОС совпадает с явной (Quit = Ctrl+Q на Linux): два одинаковых
+        # QShortcut Qt считает неоднозначными и не срабатывает ни один
+        seen = set()
         for key, slot in pairs:
-            QShortcut(QKeySequence(key), self, slot)
+            seq = QKeySequence(key)
+            if seq.isEmpty() or seq.toString() in seen:
+                continue
+            seen.add(seq.toString())
+            QShortcut(seq, self, slot)
 
     def zoom(self, direction: int) -> None:
         current = self.view.zoomFactor()
