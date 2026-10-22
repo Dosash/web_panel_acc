@@ -1,0 +1,14 @@
+# Десктоп-приложение: зависимости панели + встроенный браузер Qt + сборщик.
+# Python 3.12. Установка: pip install -r desktop/requirements.txt
+-r ../requirements.txt
+
+PyQtWebEngine==5.15.7
+# Qt для PyQt5 и QtWebEngine должен быть одной версии. Под Windows колёса Qt есть только 5.15.2
+PyQt5-Qt5==5.15.2 ; sys_platform == "win32"
+PyQtWebEngine-Qt5==5.15.2 ; sys_platform == "win32"
+PyQt5-Qt5==5.15.19 ; sys_platform != "win32"
+PyQtWebEngine-Qt5==5.15.19 ; sys_platform != "win32"
+
+# только для сборки
+pyinstaller==6.22.3
+pillow==13.0.0

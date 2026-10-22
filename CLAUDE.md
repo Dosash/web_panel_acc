@@ -11,3 +11,5 @@
 - Изменения отмечать в `CHANGELOG.md`, новые эндпоинты — в `docs/API.md`, планы — в `docs/ROADMAP.md`.
 - `data/` и `.env` содержат секреты (ключ шифрования сессий) — не коммитить и не выводить.
 - Адреса в `static/` — только относительные (`api/...`, `ws`): панель может стоять под путём `WEB_PREFIX`.
+- `desktop/` — программа для Windows/Linux/macOS (PyQt5 WebEngine + тот же `app/`), см. `desktop/README.md`.
+  Новый модуль, который `app/` грузит по имени, может понадобиться в `hiddenimports` в `desktop/tg-panel.spec`.

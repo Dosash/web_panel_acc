@@ -95,6 +95,12 @@ Docker-образ на `python:3.12-slim` (+ `libglib2.0-0` для QtCore из P
 За общим nginx панель стоит под своим путём (`WEB_PREFIX`), nginx должен пропускать WebSocket
 (`Upgrade`/`Connection`). Подробно — README, раздел «Доступ к панели».
 
+**Программа для компьютера** (`desktop/`): тот же процесс, но в одном приложении PyQt5. `launcher.py` выставляет
+`DATA_DIR` (папка данных пользователя), `WEB_HOST=127.0.0.1` и случайный `WEB_PASSWORD`, `server.py` запускает
+uvicorn с `app.main:app` в фоновом потоке, `shell.py` показывает интерфейс в Qt WebEngine и кладёт cookie входа
+(`signer.dumps`) прямо в профиль браузера. Код `app/` и `static/` для программы не меняется. Сборка — PyInstaller
+на каждой ОС, под все три — GitHub Actions. Подробно — [desktop/README.md](../desktop/README.md).
+
 ## Безопасность
 
 - Сессии в БД зашифрованы; ключ в `data/secret.key`. Утечка БД без ключа сессии не раскрывает.

@@ -6,3 +6,7 @@ data/
 tdata/
 *.session
 *.session-journal
+desktop/.venv/
+desktop/build/
+desktop/dist/
+desktop/release/
