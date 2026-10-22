@@ -4,7 +4,8 @@
 const S = {
   accounts: new Map(),      // id -> account
   scope: "",                // "" = все аккаунты, иначе id аккаунта
-  folder: "main",           // main | archive | unread
+  folder: "main",           // main | unread | archive | id папки панели (число)
+  folders: [],              // папки панели: [{id, name, items: [{account_id, chat_id}]}]
   dialogs: [],
   current: null,            // {account_id, id, title, type, can_send, ...}
   messages: [],
@@ -69,6 +70,10 @@ const ICONS = {
   door: '<path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/><path d="M10 17l-5-5 5-5M5 12h11"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a2 2 0 0 0 3.4 0"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
+  folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
 };
 function icon(name, cls = "") {
   const body = ICONS[name] || "";
@@ -325,6 +330,7 @@ async function loadDialogs() {
   const req = ++dialogsReq;
   const params = new URLSearchParams({ archived: S.folder === "archive", limit: 100 });
   if (S.scope !== "") params.set("account_id", S.scope);
+  if (typeof S.folder === "number") params.set("folder_id", S.folder);
   if (!S.dialogs.length) $("#dialog-list").innerHTML = skeletonDialogs();
   try {
     const list = await api(`/api/dialogs?${params}`);
@@ -354,7 +360,9 @@ function renderDialogs() {
   if (!list.length) {
     box.innerHTML = !S.accounts.size ? emptyState("plus", "Добавьте первый аккаунт кнопкой «+» слева")
       : q ? emptyState("search", "Ничего не найдено")
-      : S.folder === "unread" ? emptyState("check", "Всё прочитано") : emptyState("msg", "Чатов нет");
+      : S.folder === "unread" ? emptyState("check", "Всё прочитано")
+      : typeof S.folder === "number" ? emptyState("folder", "Папка пуста. Нажмите на чат правой кнопкой → «Добавить в папку»")
+      : emptyState("msg", "Чатов нет");
     return;
   }
   box.innerHTML = "";
@@ -384,17 +392,13 @@ function renderDialogs() {
         </div>
       </div>`);
     el.onclick = () => openChat(d);
+    // правый клик мышью, долгое нажатие на телефоне
+    el.oncontextmenu = e => { e.preventDefault(); dialogMenu(d, e.clientX, e.clientY); };
     frag.appendChild(el);
   }
   box.appendChild(frag);
 }
 $("#dialog-filter").addEventListener("input", renderDialogs);
-document.querySelectorAll(".seg").forEach(t => t.onclick = () => {
-  document.querySelectorAll(".seg").forEach(x => x.classList.toggle("active", x === t));
-  const wasArchive = S.folder === "archive";
-  S.folder = t.dataset.folder;
-  if (wasArchive || S.folder === "archive") { S.dialogs = []; loadDialogs(); } else renderDialogs();
-});
 
 // ---------- чат ----------
 async function openChat(d) {
@@ -728,10 +732,9 @@ function onEvent(ev) {
       d.last_out = m.out; d.date = m.date;
       if (!m.out && !(open && !S.ghost)) d.unread += 1;
       if (m.out) d.unread = 0;
-      S.dialogs.sort((a, b) => (S.scope !== "" ? (b.pinned - a.pinned) : 0) || b.date - a.date);
-      renderDialogs(); renderRail();
-    } else if (inScope && S.folder !== "archive") reloadDialogsSoon();
-    if (!m.out && !open && document.visibilityState !== "visible") notify(ev);
+      resortDialogs();
+    } else if (inScope && shouldShowNewChat(m)) reloadDialogsSoon();
+    if (!m.out && !open && !d?.muted && document.visibilityState !== "visible") notify(ev);
     return;
   }
   if (ev.type === "edit") { upsertMessage(ev.message); return; }
@@ -744,6 +747,15 @@ function onEvent(ev) {
       if (S.messages.length !== before) renderMessages(false);
     }
   }
+}
+// Новый чат появился в Telegram: в «Архиве» его не ждём, в папке — только если он в неё добавлен
+function shouldShowNewChat(m) {
+  if (S.folder === "archive") return false;
+  if (typeof S.folder === "number") {
+    const f = S.folders.find(x => x.id === S.folder);
+    return !!f && inFolder(f, { account_id: m.account_id, id: m.chat_id });
+  }
+  return true;
 }
 function notify(ev) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -1022,8 +1034,16 @@ function removeModal(aid) {
 }
 
 // --- информация о чате ---
-$("#chat-info").onclick = () => {
-  const c = S.current; if (!c) return;
+const isOpen = c => S.current && S.current.account_id === c.account_id && S.current.id === c.id;
+$("#chat-info").onclick = () => S.current && chatInfoModal(S.current);
+// Из меню чата: чат может быть не открыт, поэтому сначала догружаем описание
+async function openChatInfo(d) {
+  if (isOpen(d)) return chatInfoModal(S.current);
+  modal("Загрузка…", loadingHtml);
+  try { chatInfoModal({ ...d, ...(await api(chatPath(d.account_id, d.id))) }); }
+  catch (e) { $("#modal-body").innerHTML = emptyState("alert", e.message); }
+}
+function chatInfoModal(c) {
   const editable = (c.type === "channel" || c.type === "group") && c.is_admin;
   const kind = { user: "Пользователь", bot: "Бот", group: "Группа", channel: "Канал" }[c.type] || "";
   modal(kind, `
@@ -1060,12 +1080,15 @@ $("#chat-info").onclick = () => {
         await api(`${chatPath(c.account_id, c.id)}/photo`, { method: "POST", form: fd });
         bumpAvatar(c.account_id, c.id);
         avaBox.querySelector(".avatar").replaceWith(chatAvatar());
-        renderChatHead(); renderDialogs();
+        if (isOpen(c)) renderChatHead();
+        renderDialogs();
         toast("Аватар обновлён");
       }));
       formSubmit(root, async fd => {
         const info = await api(`${chatPath(c.account_id, c.id)}/edit`, { method: "POST", body: Object.fromEntries(fd) });
-        Object.assign(S.current, info); renderChatHead(); closeModal(); toast("Сохранено"); reloadDialogsSoon();
+        Object.assign(c, info);
+        if (isOpen(c)) { Object.assign(S.current, info); renderChatHead(); }
+        closeModal(); toast("Сохранено"); reloadDialogsSoon();
       });
       root.querySelector("#make-invite").onclick = async () => {
         try {
@@ -1081,12 +1104,194 @@ $("#chat-info").onclick = () => {
       if (b.dataset.a === "leave" && confirm("Точно?")) {
         try {
           await api(`${chatPath(c.account_id, c.id)}/leave`, { method: "POST" });
-          closeModal(); S.current = null; $("#chat").classList.add("empty"); reloadDialogsSoon();
+          closeModal();
+          if (isOpen(c)) { S.current = null; $("#chat").classList.add("empty"); }
+          reloadDialogsSoon();
         } catch (ex) { toast(ex.message, true); }
       }
     };
   });
-};
+}
+
+// ---------- меню чата (правый клик / долгое нажатие) ----------
+let ctxEl = null;
+function closeCtx() { ctxEl?.remove(); ctxEl = null; }
+document.addEventListener("mousedown", e => { if (ctxEl && !ctxEl.contains(e.target)) closeCtx(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeCtx(); });
+window.addEventListener("resize", closeCtx);
+$("#dialog-list").addEventListener("scroll", closeCtx, { passive: true });
+
+// items: [{icon, label, run, danger, checked, keepOpen}] или "sep"
+function ctxMenu(x, y, items, title = "") {
+  closeCtx();
+  ctxEl = document.createElement("div");
+  ctxEl.className = "ctx-menu";
+  ctxEl.setAttribute("role", "menu");
+  fillCtx(items, title);
+  document.body.appendChild(ctxEl);
+  // не даём меню уехать за край экрана
+  const r = ctxEl.getBoundingClientRect();
+  ctxEl.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  ctxEl.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+}
+function fillCtx(items, title = "") {
+  ctxEl.innerHTML = (title ? `<div class="ctx-title">${esc(title)}</div>` : "") + items.map((it, i) => it === "sep"
+    ? '<div class="ctx-sep"></div>'
+    : `<button class="ctx-item${it.danger ? " danger" : ""}" data-i="${i}" role="menuitem">
+        <span class="ctx-ic">${icon(it.icon)}</span><span class="ctx-label">${esc(it.label)}</span>
+        ${it.checked ? `<span class="ctx-check">${icon("check")}</span>` : it.more ? `<span class="ctx-more">${icon("chevron")}</span>` : ""}
+      </button>`).join("");
+  ctxEl.onclick = async e => {
+    const b = e.target.closest(".ctx-item"); if (!b) return;
+    const it = items[+b.dataset.i];
+    if (!it.keepOpen) closeCtx();
+    try { await it.run(); } catch (ex) { toast(ex.message, true); }
+  };
+}
+
+const KIND_ABOUT = { channel: "О канале", group: "О группе", bot: "О боте", user: "О пользователе" };
+function findDialog(d) { return S.dialogs.find(x => x.account_id === d.account_id && x.id === d.id) || d; }
+function resortDialogs() {
+  S.dialogs.sort((a, b) => (b.pinned - a.pinned) || b.date - a.date);
+  renderDialogs(); renderRail();
+}
+function dialogMenu(d, x, y) { ctxMenu(x, y, dialogMenuItems(d), d.title); }
+function dialogMenuItems(d) {
+  const folderId = typeof S.folder === "number" ? S.folder : null;
+  const folder = folderId && S.folders.find(f => f.id === folderId);
+  return [
+    { icon: "check", label: "Прочитать всё", run: () => markRead(d).then(() => toast("Прочитано")) },
+    { icon: "info", label: KIND_ABOUT[d.type] || "О чате", run: () => openChatInfo(d) },
+    "sep",
+    { icon: "pin", label: d.pinned ? "Открепить" : "Закрепить", run: () => togglePin(d) },
+    { icon: d.muted ? "bell" : "muted", label: d.muted ? "Включить уведомления" : "Выключить уведомления", run: () => toggleMute(d) },
+    { icon: "folderPlus", label: "Добавить в папку", more: true, keepOpen: true, run: () => folderPicker(d) },
+    ...(folder ? [{ icon: "x", label: `Убрать из «${folder.name}»`, run: () => removeFromFolder(folder, d) }] : []),
+    { icon: "archive", label: d.archived ? "Вернуть из архива" : "Архивировать", run: () => toggleArchive(d) },
+  ];
+}
+async function togglePin(d) {
+  const pinned = !d.pinned;
+  await api(`${chatPath(d.account_id, d.id)}/pin`, { method: "POST", body: { pinned } });
+  findDialog(d).pinned = pinned;
+  resortDialogs();
+  toast(pinned ? "Чат закреплён" : "Чат откреплён");
+}
+async function toggleMute(d) {
+  const muted = !d.muted;
+  await api(`${chatPath(d.account_id, d.id)}/mute`, { method: "POST", body: { muted } });
+  findDialog(d).muted = muted;
+  renderDialogs(); renderRail();
+  toast(muted ? "Уведомления выключены" : "Уведомления включены");
+}
+async function toggleArchive(d) {
+  const archived = !d.archived;
+  await api(`${chatPath(d.account_id, d.id)}/archive`, { method: "POST", body: { archived } });
+  // в «Чатах» архивный чат пропадает, в «Архиве» — возвращённый; в папках остаётся
+  if (S.folder === "main" || S.folder === "unread" || S.folder === "archive") {
+    S.dialogs = S.dialogs.filter(x => !(x.account_id === d.account_id && x.id === d.id));
+  } else findDialog(d).archived = archived;
+  renderDialogs(); renderRail();
+  toast(archived ? "Чат в архиве" : "Чат возвращён из архива");
+}
+
+// ---------- папки ----------
+async function loadFolders() {
+  S.folders = await api("/api/folders");
+  if (typeof S.folder === "number" && !S.folders.some(f => f.id === S.folder)) S.folder = "main";
+  renderFolderTabs();
+}
+const inFolder = (f, d) => f.items.some(i => i.account_id === d.account_id && i.chat_id === d.id);
+function folderPicker(d) {
+  const items = [
+    { icon: "back", label: "Назад", keepOpen: true, run: () => fillCtx(dialogMenuItems(d), d.title) },
+    "sep",
+    ...S.folders.map(f => ({
+      icon: "folder", label: f.name, checked: inFolder(f, d), keepOpen: true,
+      run: async () => {
+        const has = inFolder(f, d);
+        const upd = has
+          ? await api(`/api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" })
+          : await api(`/api/folders/${f.id}/items`, { method: "POST", body: { account_id: d.account_id, chat_id: d.id } });
+        Object.assign(f, upd);
+        renderFolderTabs();
+        if (S.folder === f.id) reloadDialogsSoon();
+        toast(has ? `Убрано из «${f.name}»` : `Добавлено в «${f.name}»`);
+        folderPicker(d);
+      },
+    })),
+    ...(S.folders.length ? ["sep"] : []),
+    { icon: "plus", label: "Новая папка…", run: () => folderNameModal(null, d) },
+  ];
+  fillCtx(items, "Папки");
+}
+async function removeFromFolder(f, d) {
+  Object.assign(f, await api(`/api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" }));
+  S.dialogs = S.dialogs.filter(x => !(x.account_id === d.account_id && x.id === d.id));
+  renderFolderTabs(); renderDialogs();
+  toast(`Убрано из «${f.name}»`);
+}
+function folderNameModal(folder, addChat) {
+  modal(folder ? "Переименовать папку" : "Новая папка", `
+    <form class="form">
+      <label>Название<input name="name" value="${esc(folder?.name || "")}" maxlength="40" required autocomplete="off" placeholder="Например: Модели"></label>
+      ${addChat ? `<p class="hint">«${esc(addChat.title)}» сразу попадёт в эту папку.</p>` : ""}
+      <div class="error"></div><button class="btn primary block" type="submit">${folder ? "Сохранить" : "Создать"}</button>
+    </form>`, root => {
+    root.querySelector("input").focus();
+    formSubmit(root, async fd => {
+      let f;
+      if (folder) f = await api(`/api/folders/${folder.id}`, { method: "PATCH", body: { name: fd.get("name") } });
+      else {
+        f = await api("/api/folders", { method: "POST", body: { name: fd.get("name") } });
+        if (addChat) f = await api(`/api/folders/${f.id}/items`, { method: "POST", body: { account_id: addChat.account_id, chat_id: addChat.id } });
+      }
+      closeModal();
+      await loadFolders();
+      toast(folder ? "Папка переименована" : `Папка «${f.name}» создана`);
+    });
+  });
+}
+function folderMenu(f, x, y) {
+  ctxMenu(x, y, [
+    { icon: "edit", label: "Переименовать", run: () => folderNameModal(f) },
+    { icon: "trash", label: "Удалить папку", danger: true, run: async () => {
+      if (!confirm(`Удалить папку «${f.name}»? Чаты останутся, пропадёт только папка.`)) return;
+      await api(`/api/folders/${f.id}`, { method: "DELETE" });
+      if (S.folder === f.id) setFolder("main");
+      await loadFolders();
+      toast("Папка удалена");
+    } },
+  ], f.name);
+}
+function renderFolderTabs() {
+  const tabs = [
+    { id: "main", label: "Все чаты" },
+    { id: "unread", label: "Непрочитанные" },
+    ...S.folders.map(f => ({ id: f.id, label: f.name, count: f.items.length, folder: f })),
+    { id: "archive", label: "Архив" },
+  ];
+  const box = $("#folder-tabs");
+  box.innerHTML = tabs.map((t, i) => `<button class="ftab${S.folder === t.id ? " active" : ""}" data-i="${i}" role="tab">${
+    t.folder ? icon("folder") : ""}${esc(t.label)}${t.count ? `<span class="ftab-n">${t.count}</span>` : ""}</button>`).join("")
+    + `<button class="ftab add" title="Новая папка">${icon("plus")}</button>`;
+  box.querySelectorAll(".ftab[data-i]").forEach(b => {
+    const t = tabs[+b.dataset.i];
+    b.onclick = () => setFolder(t.id);
+    if (t.folder) b.oncontextmenu = e => { e.preventDefault(); folderMenu(t.folder, e.clientX, e.clientY); };
+  });
+  box.querySelector(".ftab.add").onclick = () => folderNameModal(null);
+  box.querySelector(".ftab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+function setFolder(id) {
+  const prev = S.folder;
+  S.folder = id;
+  renderFolderTabs();
+  const light = v => v === "main" || v === "unread";
+  // «Все чаты» ↔ «Непрочитанные» — тот же список, остальное грузим заново
+  if (light(prev) && light(id)) renderDialogs();
+  else { S.dialogs = []; loadDialogs(); }
+}
 
 // ---------- невидимка и тема ----------
 function renderGhost() {
@@ -1114,7 +1319,7 @@ async function start() {
   try { sess = await api("/api/session"); } catch { return showLogin(); }
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
-  await loadAccounts();
+  await Promise.all([loadAccounts(), loadFolders()]);
   await loadDialogs();
   if (!started) {
     started = true;

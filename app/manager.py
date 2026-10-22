@@ -2,11 +2,15 @@
 import asyncio
 import json
 import logging
+import time
+from datetime import datetime
 from urllib.parse import urlparse
 
 from opentele.api import APIData
 from opentele.tl import TelegramClient
-from telethon import events, types, utils
+from telethon import events, functions, types, utils
+from telethon.errors import RPCError
+from telethon.tl.custom import Dialog
 from telethon.errors import AuthKeyUnregisteredError, UserDeactivatedBanError, UserDeactivatedError
 from telethon.sessions import StringSession
 
@@ -197,6 +201,18 @@ def message_dict(account_id: int, msg, sender=None) -> dict:
     }
 
 
+MUTE_FOREVER = 2 ** 31 - 1
+
+
+def is_muted(notify_settings) -> bool:
+    """mute_until в прошлом — уведомления уже включились сами."""
+    until = getattr(notify_settings, "mute_until", None)
+    if not until:
+        return False
+    ts = until.timestamp() if isinstance(until, datetime) else int(until)
+    return ts > time.time()
+
+
 def dialog_dict(account_id: int, d) -> dict:
     last = d.message
     preview, last_media, last_action = "", None, ""
@@ -216,7 +232,7 @@ def dialog_dict(account_id: int, d) -> dict:
         "mentions": d.unread_mentions_count,
         "pinned": d.pinned,
         "archived": d.archived,
-        "muted": bool(d.dialog.notify_settings and d.dialog.notify_settings.mute_until),
+        "muted": is_muted(d.dialog.notify_settings),
         "date": d.date.timestamp() if d.date else 0,
         "last_text": preview[:200],
         "last_media": last_media,
@@ -378,3 +394,26 @@ class Manager:
 
     def peer_id(self, entity) -> int:
         return utils.get_peer_id(entity)
+
+    async def peer_dialogs(self, account_id: int, chat_ids: list[int]) -> list[dict]:
+        """Диалоги по списку id одним запросом — для папок, где чаты могут быть далеко за первой сотней."""
+        client = self.client(account_id)
+        peers = []
+        for cid in chat_ids:
+            try:
+                peers.append(types.InputDialogPeer(await self.entity(account_id, cid)))
+            except (ValueError, RPCError):
+                log.info("Чат %s аккаунта %s недоступен — пропускаю", cid, account_id)
+        if not peers:
+            return []
+        res = await client(functions.messages.GetPeerDialogsRequest(peers=peers))
+        entities = {utils.get_peer_id(e): e for e in [*res.users, *res.chats]}
+        messages = {}
+        for m in res.messages:
+            m._finish_init(client, entities, None)
+            messages[(utils.get_peer_id(m.peer_id), m.id)] = m
+        result = []
+        for dlg in res.dialogs:
+            message = messages.get((utils.get_peer_id(dlg.peer), dlg.top_message))
+            result.append(dialog_dict(account_id, Dialog(client, dlg, entities, message)))
+        return result

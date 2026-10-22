@@ -41,7 +41,10 @@
 
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/api/dialogs?account_id=&archived=&limit=100` | Диалоги одного или всех аккаунтов, по дате |
+| GET | `/api/dialogs?account_id=&archived=&limit=100&folder_id=` | Диалоги одного или всех аккаунтов; закреплённые сверху, дальше по дате. С `folder_id` — только чаты этой папки панели (запрашиваются точечно, даже если далеко за первой сотней) |
+| POST | `/api/accounts/{aid}/chats/{cid}/pin` | `{pinned}` — закрепить/открепить чат в Telegram (лимит 5, с Premium 10) |
+| POST | `/api/accounts/{aid}/chats/{cid}/mute` | `{muted}` — выключить уведомления навсегда / включить |
+| POST | `/api/accounts/{aid}/chats/{cid}/archive` | `{archived}` — в архив / из архива |
 | GET | `/api/accounts/{aid}/chats/{cid}` | Описание чата: `title, type, username, about, members, is_admin, can_send, phone` |
 | POST | `/api/accounts/{aid}/chats/{cid}/read` | Отметить прочитанным |
 | POST | `/api/accounts/{aid}/chats/{cid}/edit` | `{title?, about?, username?}` — для админа группы/канала |
@@ -54,6 +57,20 @@
 
 Объект диалога: `account_id, id, title, type (user|bot|group|channel), username, unread, mentions,
 pinned, archived, muted, date, last_text, last_media, last_action, last_out, is_creator, is_admin, verified`.
+
+## Папки панели
+
+Папки хранятся в базе панели (не в Telegram), поэтому в одной папке могут быть чаты разных аккаунтов.
+При удалении аккаунта его чаты убираются из всех папок.
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/folders` | `[{id, name, position, items: [{account_id, chat_id}]}]` |
+| POST | `/api/folders` | `{name}` — создать (до 40 символов) |
+| PATCH | `/api/folders/{id}` | `{name}` — переименовать |
+| DELETE | `/api/folders/{id}` | Удалить папку (чаты не трогаются) |
+| POST | `/api/folders/{id}/items` | `{account_id, chat_id}` — добавить чат; повтор игнорируется |
+| DELETE | `/api/folders/{id}/items?account_id=&chat_id=` | Убрать чат из папки |
 
 ## Сообщения
 

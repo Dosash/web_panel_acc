@@ -207,6 +207,49 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .search > [data-icon] { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
 .search > [data-icon] svg.i { width: 18px; height: 18px; }
 .search input { padding-left: 38px; border-radius: 12px; background: var(--surface-2); }
+/* вкладки папок: прокручиваются по горизонтали, если не влезают */
+.folder-tabs {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -14px; padding: 0 14px 2px;
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+.folder-tabs::-webkit-scrollbar { display: none; }
+.ftab {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--muted); padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  font-weight: 600; font-size: 13px; white-space: nowrap; transition: background .15s, color .15s, border-color .15s;
+}
+.ftab:hover { color: var(--text); background: var(--surface-3); }
+.ftab.active { background: var(--accent-soft); color: var(--accent); border-color: rgb(79 140 255 / .35); }
+.ftab svg.i { width: 15px; height: 15px; }
+.ftab-n { font-size: 11px; font-weight: 700; background: var(--surface-3); color: var(--muted); border-radius: 999px; padding: 0 6px; min-width: 18px; text-align: center; }
+.ftab.active .ftab-n { background: var(--accent); color: #fff; }
+.ftab.add { padding: 6px 9px; border-style: dashed; color: var(--accent); background: transparent; }
+
+/* контекстное меню чата и папок */
+.ctx-menu {
+  position: fixed; z-index: 70; min-width: 230px; max-width: 300px; padding: 6px; border-radius: 14px;
+  background: var(--elev); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
+  animation: pop .12s ease-out; max-height: min(70vh, 520px); overflow-y: auto;
+}
+.ctx-title {
+  padding: 6px 10px 8px; font-size: 12px; font-weight: 600; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+.ctx-item {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 9px;
+  background: transparent; cursor: pointer; text-align: left; font-size: 13.5px; font-weight: 500;
+}
+.ctx-item:hover, .ctx-item:focus-visible { background: var(--surface-2); outline: none; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-ic { color: var(--muted); display: inline-grid; }
+.ctx-item.danger .ctx-ic { color: var(--danger); }
+.ctx-ic svg.i { width: 17px; height: 17px; }
+.ctx-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-check { color: var(--accent); display: inline-grid; }
+.ctx-more { color: var(--faint); display: inline-grid; }
+.ctx-check svg.i, .ctx-more svg.i { width: 16px; height: 16px; }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
 .segmented { display: flex; background: var(--surface-2); border-radius: 12px; padding: 3px; gap: 2px; }
 .seg {
   flex: 1; border: 0; background: transparent; padding: 7px 6px; border-radius: 9px; cursor: pointer;

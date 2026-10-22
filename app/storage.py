@@ -58,6 +58,22 @@ def init_db() -> None:
                 full_name TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL
             )""")
+        # Папки панели: в одной папке могут лежать чаты разных аккаунтов
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL
+            )""")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS folder_items (
+                folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+                account_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                added_at REAL NOT NULL,
+                PRIMARY KEY (folder_id, account_id, chat_id)
+            )""")
 
 
 def _row(r: sqlite3.Row) -> Account:
@@ -119,3 +135,58 @@ def update_account(account_id: int, **fields) -> Account | None:
 def delete_account(account_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        c.execute("DELETE FROM folder_items WHERE account_id = ?", (account_id,))
+
+
+# ---------- папки ----------
+
+def folder_items(folder_id: int) -> list[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT account_id, chat_id FROM folder_items WHERE folder_id = ? ORDER BY added_at",
+                         (folder_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_folder(folder_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT id, name, position FROM folders WHERE id = ?", (folder_id,)).fetchone()
+    return {**dict(r), "items": folder_items(folder_id)} if r else None
+
+
+def list_folders() -> list[dict]:
+    with _conn() as c:
+        ids = [r[0] for r in c.execute("SELECT id FROM folders ORDER BY position, id")]
+    return [get_folder(i) for i in ids]
+
+
+def create_folder(name: str) -> dict:
+    with _conn() as c:
+        pos = c.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM folders").fetchone()[0]
+        cur = c.execute("INSERT INTO folders (name, position, created_at) VALUES (?, ?, ?)",
+                        (name, pos, time.time()))
+        folder_id = cur.lastrowid
+    return get_folder(folder_id)
+
+
+def rename_folder(folder_id: int, name: str) -> dict | None:
+    with _conn() as c:
+        c.execute("UPDATE folders SET name = ? WHERE id = ?", (name, folder_id))
+    return get_folder(folder_id)
+
+
+def delete_folder(folder_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM folder_items WHERE folder_id = ?", (folder_id,))
+        c.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+
+
+def add_folder_item(folder_id: int, account_id: int, chat_id: int) -> None:
+    with _conn() as c:
+        c.execute("INSERT OR IGNORE INTO folder_items (folder_id, account_id, chat_id, added_at) VALUES (?, ?, ?, ?)",
+                  (folder_id, account_id, chat_id, time.time()))
+
+
+def remove_folder_item(folder_id: int, account_id: int, chat_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM folder_items WHERE folder_id = ? AND account_id = ? AND chat_id = ?",
+                  (folder_id, account_id, chat_id))

@@ -17,7 +17,7 @@ from telethon.errors import BotResponseTimeoutError, RPCError
 
 from . import storage
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, PANEL_PASSWORD, TMP_DIR
-from .manager import Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type
+from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type
 from .tdata_import import ImportError_, convert, save_upload
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -48,9 +48,21 @@ app = FastAPI(title="TG Panel", lifespan=lifespan)
 
 # ---------- ошибки ----------
 
+RPC_MESSAGES = {
+    "PINNED_DIALOGS_TOO_MUCH": "Слишком много закреплённых чатов: Telegram разрешает 5 (с Premium — 10). Открепите какой-нибудь",
+    "CHANNELS_TOO_MUCH": "Аккаунт состоит в слишком большом числе каналов и групп",
+    "USERNAME_OCCUPIED": "Эта ссылка уже занята",
+    "USERNAME_INVALID": "Недопустимая ссылка: латиница, цифры и _, от 5 символов",
+    "CHAT_ADMIN_REQUIRED": "Нужны права администратора",
+    "INVITE_HASH_EXPIRED": "Ссылка-приглашение устарела",
+    "USER_ALREADY_PARTICIPANT": "Аккаунт уже состоит в этом чате",
+}
+
+
 @app.exception_handler(RPCError)
 async def rpc_error(_: Request, e: RPCError):
-    return JSONResponse({"detail": f"Telegram: {e.message or type(e).__name__}"}, status_code=400)
+    code = e.message or type(e).__name__
+    return JSONResponse({"detail": RPC_MESSAGES.get(code, f"Telegram: {code}")}, status_code=400)
 
 
 @app.exception_handler(RuntimeError)
@@ -203,7 +215,7 @@ async def remove_account(aid: int, logout: bool = False):
     if logout:
         await manager.client(aid).log_out()
     await manager.stop(aid)
-    storage.delete_account(aid)
+    storage.delete_account(aid)  # заодно убирает чаты аккаунта из папок
     for f in CACHE_DIR.glob(f"*_{aid}_*"):
         f.unlink(missing_ok=True)
     return {"ok": True}
@@ -283,20 +295,134 @@ async def reset_authorization(aid: int, auth_hash: str):
 # ---------- диалоги и сообщения ----------
 
 @app.get("/api/dialogs", dependencies=A)
-async def dialogs(account_id: int | None = None, archived: bool = False, limit: int = 100):
-    ids = [account_id] if account_id else [i for i, l in manager.live.items() if l.status == "online"]
+async def dialogs(account_id: int | None = None, archived: bool = False, limit: int = 100,
+                  folder_id: int | None = None):
+    online = [i for i, l in manager.live.items() if l.status == "online"]
 
-    async def load(aid: int):
-        try:
-            ds = await manager.client(aid).get_dialogs(limit=limit, archived=archived)
-            return [dialog_dict(aid, d) for d in ds]
-        except Exception as e:
-            log.warning("Диалоги аккаунта %s: %s", aid, e)
-            return []
+    if folder_id is not None:
+        # Папка панели: чаты из разных аккаунтов, грузим ровно их
+        by_account: dict[int, list[int]] = {}
+        for item in storage.folder_items(folder_id):
+            if item["account_id"] in online and (account_id is None or item["account_id"] == account_id):
+                by_account.setdefault(item["account_id"], []).append(item["chat_id"])
 
-    merged = [d for chunk in await asyncio.gather(*(load(i) for i in ids)) for d in chunk]
-    merged.sort(key=lambda d: (not d["pinned"] if account_id else False, -d["date"]))
+        async def load(aid: int):
+            try:
+                return await manager.peer_dialogs(aid, by_account[aid])
+            except Exception as e:
+                log.warning("Папка %s, аккаунт %s: %s", folder_id, aid, e)
+                return []
+        chunks = await asyncio.gather(*(load(i) for i in by_account))
+    else:
+        ids = [account_id] if account_id else online
+
+        async def load(aid: int):
+            try:
+                ds = await manager.client(aid).get_dialogs(limit=limit, archived=archived)
+                return [dialog_dict(aid, d) for d in ds]
+            except Exception as e:
+                log.warning("Диалоги аккаунта %s: %s", aid, e)
+                return []
+        chunks = await asyncio.gather(*(load(i) for i in ids))
+
+    merged = [d for chunk in chunks for d in chunk]
+    merged.sort(key=lambda d: (not d["pinned"], -d["date"]))
     return merged
+
+
+class PinIn(BaseModel):
+    pinned: bool
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/pin", dependencies=A)
+async def pin_dialog(aid: int, cid: int, body: PinIn):
+    entity = await manager.entity(aid, cid)
+    await manager.client(aid)(functions.messages.ToggleDialogPinRequest(
+        peer=types.InputDialogPeer(entity), pinned=body.pinned))
+    return {"ok": True, "pinned": body.pinned}
+
+
+class MuteIn(BaseModel):
+    muted: bool
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/mute", dependencies=A)
+async def mute_dialog(aid: int, cid: int, body: MuteIn):
+    entity = await manager.entity(aid, cid)
+    await manager.client(aid)(functions.account.UpdateNotifySettingsRequest(
+        peer=types.InputNotifyPeer(entity),
+        settings=types.InputPeerNotifySettings(mute_until=MUTE_FOREVER if body.muted else 0)))
+    return {"ok": True, "muted": body.muted}
+
+
+class ArchiveIn(BaseModel):
+    archived: bool
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/archive", dependencies=A)
+async def archive_dialog(aid: int, cid: int, body: ArchiveIn):
+    await manager.client(aid).edit_folder(await manager.entity(aid, cid), 1 if body.archived else 0)
+    return {"ok": True, "archived": body.archived}
+
+
+# ---------- папки панели ----------
+
+class FolderIn(BaseModel):
+    name: str
+
+
+class FolderItemIn(BaseModel):
+    account_id: int
+    chat_id: int
+
+
+def _folder_or_404(folder_id: int) -> dict:
+    folder = storage.get_folder(folder_id)
+    if folder is None:
+        raise HTTPException(404, "Папка не найдена")
+    return folder
+
+
+@app.get("/api/folders", dependencies=A)
+async def folders():
+    return storage.list_folders()
+
+
+@app.post("/api/folders", dependencies=A)
+async def create_folder(body: FolderIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Укажите название папки")
+    return storage.create_folder(name[:40])
+
+
+@app.patch("/api/folders/{folder_id}", dependencies=A)
+async def rename_folder(folder_id: int, body: FolderIn):
+    _folder_or_404(folder_id)
+    if not body.name.strip():
+        raise HTTPException(400, "Укажите название папки")
+    return storage.rename_folder(folder_id, body.name.strip()[:40])
+
+
+@app.delete("/api/folders/{folder_id}", dependencies=A)
+async def delete_folder(folder_id: int):
+    _folder_or_404(folder_id)
+    storage.delete_folder(folder_id)
+    return {"ok": True}
+
+
+@app.post("/api/folders/{folder_id}/items", dependencies=A)
+async def add_folder_item(folder_id: int, body: FolderItemIn):
+    _folder_or_404(folder_id)
+    storage.add_folder_item(folder_id, body.account_id, body.chat_id)
+    return storage.get_folder(folder_id)
+
+
+@app.delete("/api/folders/{folder_id}/items", dependencies=A)
+async def remove_folder_item(folder_id: int, account_id: int, chat_id: int):
+    _folder_or_404(folder_id)
+    storage.remove_folder_item(folder_id, account_id, chat_id)
+    return storage.get_folder(folder_id)
 
 
 @app.get("/api/accounts/{aid}/chats/{cid}", dependencies=A)
