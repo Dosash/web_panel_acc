@@ -1,0 +1,22 @@
+# TG Panel — веб-панель для Telegram-аккаунтов (один контейнер).
+# Сеть хоста: панель слушает WEB_HOST:WEB_PORT прямо на сервере (по умолчанию 127.0.0.1:8080 —
+# доступна только с самого сервера; как открыть её — см. README, раздел «Доступ к панели»).
+services:
+  tg-panel:
+    build: .
+    image: tg-panel:latest
+    container_name: tg-panel
+    restart: unless-stopped
+    stop_grace_period: 30s
+    network_mode: host
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

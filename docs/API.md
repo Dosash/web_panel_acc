@@ -1,7 +1,7 @@
 # API
 
-Все эндпоинты, кроме `/api/login` и `/api/logout`, требуют cookie `panel_auth`
-(если в `.env` задан `PANEL_PASSWORD`). Ошибки возвращаются как `{"detail": "текст"}`.
+Все эндпоинты, кроме `/api/login`, `/api/logout` и `/api/health`, требуют cookie `panel_auth`
+(если в `.env` задан `WEB_PASSWORD`). Ошибки возвращаются как `{"detail": "текст"}`.
 
 Обозначения: `aid` — id аккаунта в панели, `cid` — id чата в формате Telethon
 (пользователь `123`, группа `-123`, канал/супергруппа `-100123`), `mid` — id сообщения.
@@ -19,7 +19,11 @@
 |---|---|---|---|
 | POST | `/api/login` | `{password}` | `{ok}` + cookie |
 | POST | `/api/logout` | — | `{ok}` |
-| GET | `/api/session` | — | `{ok, auth}` — `auth: false`, если пароль отключён |
+| GET | `/api/session` | — | `{ok, auth, version, hub_url}` — `auth: false`, если пароль отключён; `hub_url` — ссылка «Все панели» или пустая строка |
+| GET | `/api/health` | — | Без входа. `{status: "ok" \| "degraded", version, accounts, online, errors}` — `degraded`, если есть аккаунты с ошибкой |
+
+Если задан `WEB_PREFIX` (например, `/accounts`), все пути — с ним: `/accounts/api/session`, `/accounts/ws`.
+Без префикса панель тоже отвечает (для проверок на самом сервере).
 
 ## Аккаунты
 

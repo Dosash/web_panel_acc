@@ -74,6 +74,7 @@ const ICONS = {
   archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
   folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
 };
 function icon(name, cls = "") {
   const body = ICONS[name] || "";
@@ -195,7 +196,7 @@ async function api(path, { method = "GET", body, form } = {}) {
   if (form) opts.body = form;
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, opts);
-  if (r.status === 401 && !path.startsWith("/api/login")) { showLogin(); throw new Error("Нужен вход"); }
+  if (r.status === 401 && !path.startsWith("api/login")) { showLogin(); throw new Error("Нужен вход"); }
   const data = r.headers.get("content-type")?.includes("json") ? await r.json() : null;
   if (!r.ok) {
     const d = data?.detail;
@@ -204,7 +205,7 @@ async function api(path, { method = "GET", body, form } = {}) {
   return data;
 }
 const acc = id => S.accounts.get(Number(id));
-const chatPath = (aid, cid) => `/api/accounts/${aid}/chats/${cid}`;
+const chatPath = (aid, cid) => `api/accounts/${aid}/chats/${cid}`;
 function peerColor(id) { return COLORS[Math.abs(Number(id)) % COLORS.length]; }
 
 // Аватар грузится, только когда попадает на экран (в длинных списках это сотни картинок)
@@ -232,7 +233,7 @@ function avatarEl(aid, peer, name, color, cls = "") {
   el.textContent = initials(name);
   if (aid != null) {
     const v = avatarVersion.get(key(aid, peer));
-    el.dataset.src = `/api/accounts/${aid}/avatar/${peer}${v ? `?v=${v}` : ""}`;
+    el.dataset.src = `api/accounts/${aid}/avatar/${peer}${v ? `?v=${v}` : ""}`;
     if (!avatarMissing.has(el.dataset.src)) avatarObserver.observe(el);
   }
   return el;
@@ -240,7 +241,7 @@ function avatarEl(aid, peer, name, color, cls = "") {
 // Браузер кэширует аватар на час — после смены фото добавляем к адресу версию
 const avatarVersion = new Map();
 function bumpAvatar(aid, peer) {
-  avatarMissing.delete(`/api/accounts/${aid}/avatar/${peer}`);
+  avatarMissing.delete(`api/accounts/${aid}/avatar/${peer}`);
   avatarVersion.set(key(aid, peer), Date.now());
 }
 // Аватар с карандашом: нажатие открывает выбор картинки, onFile загружает её
@@ -267,16 +268,16 @@ $("#login-form").addEventListener("submit", async e => {
   e.preventDefault();
   $("#login-error").textContent = "";
   try {
-    await api("/api/login", { method: "POST", body: { password: $("#login-password").value } });
+    await api("api/login", { method: "POST", body: { password: $("#login-password").value } });
     $("#login-password").value = "";
     start();
   } catch (err) { $("#login-error").textContent = err.message; }
 });
-$("#logout").onclick = async () => { await api("/api/logout", { method: "POST" }); location.reload(); };
+$("#logout").onclick = async () => { await api("api/logout", { method: "POST" }); location.reload(); };
 
 // ---------- аккаунты (рейка) ----------
 async function loadAccounts() {
-  const list = await api("/api/accounts");
+  const list = await api("api/accounts");
   S.accounts = new Map(list.map(a => [a.id, a]));
   renderRail();
 }
@@ -333,7 +334,7 @@ async function loadDialogs() {
   if (typeof S.folder === "number") params.set("folder_id", S.folder);
   if (!S.dialogs.length) $("#dialog-list").innerHTML = skeletonDialogs();
   try {
-    const list = await api(`/api/dialogs?${params}`);
+    const list = await api(`api/dialogs?${params}`);
     if (req !== dialogsReq) return;
     S.dialogs = list;
     renderDialogs();
@@ -705,7 +706,10 @@ function upsertMessage(m, own = false) {
 
 // ---------- realtime ----------
 function connectWS() {
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  // адрес относительно страницы: панель может стоять не в корне сайта (WEB_PREFIX)
+  const url = new URL("ws", location.href);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(url);
   const ping = setInterval(() => ws.readyState === 1 && ws.send("ping"), 25000);
   ws.onmessage = e => onEvent(JSON.parse(e.data));
   ws.onclose = ev => { clearInterval(ping); if (ev.code !== 4401) setTimeout(connectWS, 3000); };
@@ -848,7 +852,7 @@ $("#add-account").onclick = () => modal("Новый аккаунт", `
     const btn = form.querySelector("[type=submit]");
     btn.textContent = "Подключение к Telegram…";
     try {
-      const a = await api("/api/accounts/import", { method: "POST", form: send });
+      const a = await api("api/accounts/import", { method: "POST", form: send });
       S.accounts.set(a.id, a);
       closeModal();
       toast(a.updated ? `Сессия аккаунта «${a.name}» обновлена` : `Аккаунт «${a.name}» подключён`);
@@ -884,7 +888,7 @@ function accountMenu(aid) {
 }
 async function reconnect(aid) {
   closeModal(); toast("Переподключение…");
-  try { const a = await api(`/api/accounts/${aid}/reconnect`, { method: "POST" }); S.accounts.set(a.id, a); renderRail(); toast(statusText(a), a.status !== "online"); }
+  try { const a = await api(`api/accounts/${aid}/reconnect`, { method: "POST" }); S.accounts.set(a.id, a); renderRail(); toast(statusText(a), a.status !== "online"); }
   catch (e) { toast(e.message, true); }
 }
 function pickAccountThen(fn) {
@@ -903,7 +907,7 @@ function newChatModal(aid) {
     <div id="search-results" style="margin-top:12px;display:grid;gap:2px"></div>`, root => {
     root.querySelector("input").focus();
     formSubmit(root, async fd => {
-      const res = await api(`/api/accounts/${aid}/search?q=${encodeURIComponent(fd.get("q"))}`);
+      const res = await api(`api/accounts/${aid}/search?q=${encodeURIComponent(fd.get("q"))}`);
       const box = root.querySelector("#search-results");
       box.innerHTML = res.length ? "" : emptyState("search", "Ничего не найдено");
       for (const r of res) {
@@ -926,7 +930,7 @@ function channelModal(aid, kind) {
       <label>Публичная ссылка t.me/…<input name="username" placeholder="пусто — будет приватный" autocomplete="off"></label>
       <div class="error"></div><button class="btn primary block" type="submit">Создать</button>
     </form>`, root => formSubmit(root, async fd => {
-    const r = await api(`/api/accounts/${aid}/channels`, { method: "POST", body: { title: fd.get("title"), about: fd.get("about"), username: fd.get("username"), kind } });
+    const r = await api(`api/accounts/${aid}/channels`, { method: "POST", body: { title: fd.get("title"), about: fd.get("about"), username: fd.get("username"), kind } });
     closeModal();
     toast(r.warning || `Создано: ${r.title}`, !!r.warning);
     openChat({ account_id: aid, id: r.id, title: r.title, type: r.type, unread: 0, is_admin: true, is_creator: true });
@@ -937,7 +941,7 @@ function joinModal(aid) {
   modal("Вступить по ссылке", `
     <form class="form"><label>Ссылка или @username<input name="link" required placeholder="https://t.me/+AbCd… или @channel" autocomplete="off"></label>
     <div class="error"></div><button class="btn primary block" type="submit">Вступить</button></form>`, root => formSubmit(root, async fd => {
-    const r = await api(`/api/accounts/${aid}/join`, { method: "POST", body: { link: fd.get("link") } });
+    const r = await api(`api/accounts/${aid}/join`, { method: "POST", body: { link: fd.get("link") } });
     closeModal(); toast(`Готово: ${r.title}`);
     openChat({ account_id: aid, id: r.id, title: r.title, type: r.type, unread: 0 });
     reloadDialogsSoon();
@@ -946,7 +950,7 @@ function joinModal(aid) {
 async function profileModal(aid) {
   modal("Профиль Telegram", loadingHtml);
   let p;
-  try { p = await api(`/api/accounts/${aid}/profile`); } catch (e) { return $("#modal-body").innerHTML = emptyState("alert", e.message); }
+  try { p = await api(`api/accounts/${aid}/profile`); } catch (e) { return $("#modal-body").innerHTML = emptyState("alert", e.message); }
   modal("Профиль Telegram", `
     <form class="form">
       <div class="acc-head"><div id="me-ava"></div><div class="info">
@@ -961,14 +965,14 @@ async function profileModal(aid) {
     const box = root.querySelector("#me-ava");
     box.appendChild(editableAvatar(avatarEl(aid, "me", p.first_name, acc(aid).color, "lg"), async f => {
       const fd = new FormData(); fd.append("file", f);
-      await api(`/api/accounts/${aid}/photo`, { method: "POST", form: fd });
+      await api(`api/accounts/${aid}/photo`, { method: "POST", form: fd });
       bumpAvatar(aid, "me");
       box.querySelector(".avatar").replaceWith(avatarEl(aid, "me", p.first_name, acc(aid).color, "lg"));
       renderRail();
       toast("Аватар обновлён");
     }));
     formSubmit(root, async fd => {
-      await api(`/api/accounts/${aid}/profile`, { method: "POST", body: Object.fromEntries(fd) });
+      await api(`api/accounts/${aid}/profile`, { method: "POST", body: Object.fromEntries(fd) });
       toast("Профиль сохранён"); closeModal(); loadAccounts();
     });
   });
@@ -992,7 +996,7 @@ function settingsModal(aid) {
     formSubmit(root, async fd => {
       const body = { name: fd.get("name"), color };
       if (fd.get("proxy") !== a.proxy) body.proxy = fd.get("proxy");
-      const upd = await api(`/api/accounts/${aid}`, { method: "PATCH", body });
+      const upd = await api(`api/accounts/${aid}`, { method: "PATCH", body });
       S.accounts.set(aid, { ...a, ...upd });
       closeModal(); renderRail(); renderDialogs();
       toast("Сохранено");
@@ -1002,14 +1006,14 @@ function settingsModal(aid) {
 async function sessionsModal(aid) {
   modal("Активные сеансы", loadingHtml);
   try {
-    const list = await api(`/api/accounts/${aid}/authorizations`);
+    const list = await api(`api/accounts/${aid}/authorizations`);
     modal("Активные сеансы", `<div class="form">${list.map(s => `
       <div class="session-item"><span class="si">${icon(s.current ? "check" : "monitor")}</span><div><b>${esc(s.device)}</b> ${s.current ? '<span class="chip" style="--c:var(--ok)">эта панель</span>' : ""}
         <div class="small muted">${esc(s.app)} · ${esc(s.platform)} ${esc(s.system)}<br>${esc(s.ip)} ${esc(s.country)} · ${fmtTime(s.active)}</div></div>
         ${s.current ? "" : `<button class="btn danger" data-hash="${s.hash}">Завершить</button>`}</div>`).join("")}</div>`, root => {
       root.onclick = async e => {
         const b = e.target.closest("[data-hash]"); if (!b || !confirm("Завершить этот сеанс?")) return;
-        try { await api(`/api/accounts/${aid}/authorizations/${b.dataset.hash}`, { method: "DELETE" }); b.closest(".session-item").remove(); toast("Сеанс завершён"); }
+        try { await api(`api/accounts/${aid}/authorizations/${b.dataset.hash}`, { method: "DELETE" }); b.closest(".session-item").remove(); toast("Сеанс завершён"); }
         catch (ex) { toast(ex.message, true); }
       };
     });
@@ -1025,7 +1029,7 @@ function removeModal(aid) {
     </div>`, root => root.onclick = async e => {
     const b = e.target.closest("[data-logout]"); if (!b) return;
     try {
-      await api(`/api/accounts/${aid}?logout=${b.dataset.logout === "1"}`, { method: "DELETE" });
+      await api(`api/accounts/${aid}?logout=${b.dataset.logout === "1"}`, { method: "DELETE" });
       S.accounts.delete(aid); closeModal();
       if (S.current?.account_id === aid) { S.current = null; $("#chat").classList.add("empty"); }
       setScope(""); toast("Аккаунт удалён");
@@ -1197,7 +1201,7 @@ async function toggleArchive(d) {
 
 // ---------- папки ----------
 async function loadFolders() {
-  S.folders = await api("/api/folders");
+  S.folders = await api("api/folders");
   if (typeof S.folder === "number" && !S.folders.some(f => f.id === S.folder)) S.folder = "main";
   renderFolderTabs();
 }
@@ -1211,8 +1215,8 @@ function folderPicker(d) {
       run: async () => {
         const has = inFolder(f, d);
         const upd = has
-          ? await api(`/api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" })
-          : await api(`/api/folders/${f.id}/items`, { method: "POST", body: { account_id: d.account_id, chat_id: d.id } });
+          ? await api(`api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" })
+          : await api(`api/folders/${f.id}/items`, { method: "POST", body: { account_id: d.account_id, chat_id: d.id } });
         Object.assign(f, upd);
         renderFolderTabs();
         if (S.folder === f.id) reloadDialogsSoon();
@@ -1226,7 +1230,7 @@ function folderPicker(d) {
   fillCtx(items, "Папки");
 }
 async function removeFromFolder(f, d) {
-  Object.assign(f, await api(`/api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" }));
+  Object.assign(f, await api(`api/folders/${f.id}/items?account_id=${d.account_id}&chat_id=${d.id}`, { method: "DELETE" }));
   S.dialogs = S.dialogs.filter(x => !(x.account_id === d.account_id && x.id === d.id));
   renderFolderTabs(); renderDialogs();
   toast(`Убрано из «${f.name}»`);
@@ -1241,10 +1245,10 @@ function folderNameModal(folder, addChat) {
     root.querySelector("input").focus();
     formSubmit(root, async fd => {
       let f;
-      if (folder) f = await api(`/api/folders/${folder.id}`, { method: "PATCH", body: { name: fd.get("name") } });
+      if (folder) f = await api(`api/folders/${folder.id}`, { method: "PATCH", body: { name: fd.get("name") } });
       else {
-        f = await api("/api/folders", { method: "POST", body: { name: fd.get("name") } });
-        if (addChat) f = await api(`/api/folders/${f.id}/items`, { method: "POST", body: { account_id: addChat.account_id, chat_id: addChat.id } });
+        f = await api("api/folders", { method: "POST", body: { name: fd.get("name") } });
+        if (addChat) f = await api(`api/folders/${f.id}/items`, { method: "POST", body: { account_id: addChat.account_id, chat_id: addChat.id } });
       }
       closeModal();
       await loadFolders();
@@ -1257,7 +1261,7 @@ function folderMenu(f, x, y) {
     { icon: "edit", label: "Переименовать", run: () => folderNameModal(f) },
     { icon: "trash", label: "Удалить папку", danger: true, run: async () => {
       if (!confirm(`Удалить папку «${f.name}»? Чаты останутся, пропадёт только папка.`)) return;
-      await api(`/api/folders/${f.id}`, { method: "DELETE" });
+      await api(`api/folders/${f.id}`, { method: "DELETE" });
       if (S.folder === f.id) setFolder("main");
       await loadFolders();
       toast("Папка удалена");
@@ -1316,9 +1320,11 @@ renderGhost();
 let started = false;
 async function start() {
   let sess;
-  try { sess = await api("/api/session"); } catch { return showLogin(); }
+  try { sess = await api("api/session"); } catch { return showLogin(); }
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
+  $("#hub-link").hidden = !sess.hub_url;
+  if (sess.hub_url) $("#hub-link").href = sess.hub_url;
   await Promise.all([loadAccounts(), loadFolders()]);
   await loadDialogs();
   if (!started) {

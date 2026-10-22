@@ -6,10 +6,15 @@
 ./run.sh
 ```
 
+`run.sh` создаёт `.venv` и `.env` при первом запуске и выполняет `python -m app` (`app/__main__.py` → uvicorn
+на `WEB_HOST:WEB_PORT`). В Docker — та же команда (`docker compose up -d --build`).
+
 - Python-код (`app/`) — после правок **перезапустите сервер** (uvicorn запущен без `--reload`,
   чтобы не рвать соединения аккаунтов на каждом сохранении).
 - Интерфейс (`static/`) — достаточно обновить страницу (F5).
 - Для разработки с автоперезапуском: `.venv/bin/uvicorn app.main:app --reload --port 8080`
+- Проверить работу под путём, как за общим nginx: `WEB_PORT=8090 WEB_PREFIX=/accounts .venv/bin/python -m app`
+  → http://127.0.0.1:8090/accounts/
   (аккаунты будут переподключаться при каждом сохранении).
 
 Зависимости зафиксированы в `requirements.txt`. Python именно **3.12**: opentele тянет PyQt5,
@@ -19,6 +24,7 @@
 
 ```
 app/
+  __main__.py      запуск: python -m app
   config.py        настройки из .env, ключи в data/
   storage.py       SQLite + шифрование сессий
   tdata_import.py  tdata → StringSession (opentele)
@@ -88,10 +94,14 @@ data/              база, ключи, кэш (в .gitignore)
 - **Flood wait.** Массовые запросы к Telegram (аватары, медиа, диалоги со всех аккаунтов) могут
   вызвать ограничение. Telethon сам ждёт до 30 секунд (`flood_sleep_threshold`), дольше — ошибка 400.
 
+- **Адреса в интерфейсе — только относительные** (`api/...`, `ws`, без `/` в начале): панель может стоять
+  под путём `WEB_PREFIX`. `PrefixMiddleware` в `main.py` выставляет `root_path`, путь при этом не меняется.
+
 ## Отладка
 
 - Логи сервера — в терминале `./run.sh`.
-- Проверить API без интерфейса: `curl http://127.0.0.1:8080/api/accounts`.
+- Проверить API без интерфейса: `curl http://127.0.0.1:8080/api/accounts`, состояние — `curl http://127.0.0.1:8080/api/health`.
+- В Docker: `docker logs -f tg-panel`.
 - События WebSocket видны во вкладке Network → WS в DevTools браузера.
 - Если аккаунт в статусе `error` с «Сессия недействительна» — сеанс завершён в Telegram;
   загрузите tdata заново (сессия обновится в том же аккаунте).

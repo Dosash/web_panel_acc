@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from telethon import functions, types
 from telethon.errors import BotResponseTimeoutError, RPCError
 
 from . import storage
-from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, PANEL_PASSWORD, TMP_DIR
+from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, HUB_URL, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
 from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type
 from .tdata_import import ImportError_, convert, save_upload
 
@@ -29,13 +29,16 @@ COOKIE = "panel_auth"
 COOKIE_AGE = 30 * 24 * 3600
 
 
-AUTH_ENABLED = bool(PANEL_PASSWORD)
+AUTH_ENABLED = bool(WEB_PASSWORD)
+# cookie только для пути панели: за общим nginx у соседних панелей могут быть свои cookie с тем же именем
+COOKIE_PATH = WEB_PREFIX or "/"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if not AUTH_ENABLED:
-        log.warning("PANEL_PASSWORD пуст — панель открыта без пароля. Не выставляйте её в интернет.")
+        log.warning("WEB_PASSWORD пуст — панель открыта без пароля. Не выставляйте её в интернет.")
+    log.info("TG Panel %s: путь %s", VERSION, (WEB_PREFIX or "") + "/")
     storage.init_db()
     task = asyncio.create_task(manager.start_all())
     yield
@@ -43,7 +46,29 @@ async def lifespan(app: FastAPI):
     await manager.stop_all()
 
 
-app = FastAPI(title="TG Panel", lifespan=lifespan)
+app = FastAPI(title="TG Panel", version=VERSION, lifespan=lifespan)
+
+
+class PrefixMiddleware:
+    """Панель под путём WEB_PREFIX. nginx передаёт путь как есть (/accounts/api/...), Starlette
+    отрезает root_path при поиске маршрута. Без префикса панель тоже отвечает — для проверок на сервере."""
+
+    def __init__(self, app, prefix: str):
+        self.app, self.prefix = app, prefix
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope["path"]
+            if path == self.prefix and scope["type"] == "http":
+                query = scope.get("query_string", b"").decode("latin-1")
+                return await RedirectResponse(self.prefix + "/" + ("?" + query if query else ""))(scope, receive, send)
+            if path.startswith(self.prefix + "/"):
+                scope = {**scope, "root_path": scope.get("root_path", "") + self.prefix}
+        await self.app(scope, receive, send)
+
+
+if WEB_PREFIX:
+    app.add_middleware(PrefixMiddleware, prefix=WEB_PREFIX)
 
 
 # ---------- ошибки ----------
@@ -105,11 +130,11 @@ class LoginIn(BaseModel):
 
 @app.post("/api/login")
 async def login(body: LoginIn):
-    if body.password != PANEL_PASSWORD:
+    if body.password != WEB_PASSWORD:
         await asyncio.sleep(1.5)  # замедляем подбор пароля
         raise HTTPException(401, "Неверный пароль")
     resp = JSONResponse({"ok": True})
-    resp.set_cookie(COOKIE, signer.dumps("admin"), max_age=COOKIE_AGE,
+    resp.set_cookie(COOKIE, signer.dumps("admin"), max_age=COOKIE_AGE, path=COOKIE_PATH,
                     httponly=True, samesite="strict")
     return resp
 
@@ -117,13 +142,22 @@ async def login(body: LoginIn):
 @app.post("/api/logout")
 async def logout():
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(COOKIE)
+    resp.delete_cookie(COOKIE, path=COOKIE_PATH)
     return resp
 
 
 @app.get("/api/session", dependencies=[Depends(auth)])
 async def session():
-    return {"ok": True, "auth": AUTH_ENABLED}
+    return {"ok": True, "auth": AUTH_ENABLED, "version": VERSION, "hub_url": HUB_URL}
+
+
+@app.get("/api/health")
+async def health():
+    """Без входа: для HEALTHCHECK Docker и карточки панели в хабе."""
+    states = [live.status for live in manager.live.values()]
+    errors = states.count("error")
+    return {"status": "degraded" if errors else "ok", "version": VERSION,
+            "accounts": len(storage.list_accounts()), "online": states.count("online"), "errors": errors}
 
 
 # ---------- аккаунты ----------

@@ -17,7 +17,8 @@
 ## Модули
 
 ### `app/config.py`
-Читает `.env`, создаёт папки `data/`, `data/cache/`, `data/tmp/`. При первом запуске генерирует
+Читает `.env` (`WEB_HOST`, `WEB_PORT`, `WEB_PASSWORD`, `WEB_PREFIX`, `HUB_URL`, `DATA_DIR`; старые имена
+`HOST`, `PORT`, `PANEL_PASSWORD` — как запасные), создаёт папки `data/`, `data/cache/`, `data/tmp/`. При первом запуске генерирует
 `data/secret.key` (ключ Fernet для сессий) и `data/cookie.key` (подпись cookie), права `600`.
 
 ### `app/storage.py`
@@ -58,8 +59,11 @@ Fernet. Поле `api_json` — «отпечаток» клиента (api_id, �
 
 ### `app/main.py`
 FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`, раздача `static/`.
-- Авторизация панели — подписанная cookie `panel_auth` (itsdangerous, 30 дней).
-  Если `PANEL_PASSWORD` пуст, проверка отключена.
+- Авторизация панели — подписанная cookie `panel_auth` (itsdangerous, 30 дней) на пути панели.
+  Если `WEB_PASSWORD` пуст, проверка отключена.
+- `WEB_PREFIX`: `PrefixMiddleware` выставляет `root_path` для запросов под префиксом (nginx передаёт путь как есть),
+  `/accounts` без слэша перенаправляется на `/accounts/`. Интерфейс использует только относительные адреса.
+- `GET /api/health` — без входа, для `HEALTHCHECK` Docker и карточки в хабе панелей.
 - Обработчики исключений превращают `RPCError` Telethon в `400 {"detail": "Telegram: ..."}`,
   «аккаунт не подключён» (`RuntimeError`) в `409`.
 - Кэш медиа: `data/cache/m_<aid>_<chat>_<msg>[_t].<ext>`, аватары `a_<aid>_<peer>.jpg`
@@ -85,10 +89,16 @@ FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`
 **Отправка:** `POST /chats/{cid}/messages` → `client.send_message` → ответ сразу рисуется;
 дубль от события `NewMessage` отбрасывается по id (`replaceMessage`).
 
+## Развёртывание
+
+Docker-образ на `python:3.12-slim` (+ `libglib2.0-0` для QtCore из PyQt5), сеть хоста, том `./data → /app/data`.
+За общим nginx панель стоит под своим путём (`WEB_PREFIX`), nginx должен пропускать WebSocket
+(`Upgrade`/`Connection`). Подробно — README, раздел «Доступ к панели».
+
 ## Безопасность
 
 - Сессии в БД зашифрованы; ключ в `data/secret.key`. Утечка БД без ключа сессии не раскрывает.
 - tdata не хранится.
 - По умолчанию сервер слушает только `127.0.0.1`.
 - Медиа и аватары отдаются только авторизованному пользователю панели.
-- Для доступа извне: включить `PANEL_PASSWORD` и ставить панель за HTTPS (Caddy/nginx/Cloudflare Tunnel).
+- Для доступа извне: включить `WEB_PASSWORD` и ставить панель за HTTPS (Caddy/nginx/Cloudflare Tunnel).

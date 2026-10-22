@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -8,9 +9,33 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "").strip()
-HOST = os.getenv("HOST", "127.0.0.1")
-PORT = int(os.getenv("PORT", "8080"))
+VERSION = "0.6.0"
+
+
+def _env(name: str, old: str, default: str = "") -> str:
+    # старые имена (PANEL_PASSWORD, HOST, PORT) из .env версий до 0.6.0 тоже понимаем
+    return (os.getenv(name) or os.getenv(old) or default).strip()
+
+
+def normalize_prefix(value: str) -> str:
+    """WEB_PREFIX: 'accounts', '/accounts/' → '/accounts'; '' и '/' → ''."""
+    parts = [p for p in value.strip().split("/") if p]
+    for p in parts:
+        if p in (".", "..") or not re.fullmatch(r"[A-Za-z0-9._~-]+", p):
+            raise ValueError(f"WEB_PREFIX «{value}»: допустимы латинские буквы, цифры и символы - _ . ~ "
+                             "(например, /accounts)")
+    return "/" + "/".join(parts) if parts else ""
+
+
+WEB_PASSWORD = _env("WEB_PASSWORD", "PANEL_PASSWORD")
+WEB_HOST = _env("WEB_HOST", "HOST", "127.0.0.1")
+WEB_PORT = int(_env("WEB_PORT", "PORT", "8080"))
+# Путь панели, если она открыта не в корне сайта (за общим nginx): /accounts → http://сервер/accounts/
+WEB_PREFIX = normalize_prefix(os.getenv("WEB_PREFIX", ""))
+# Ссылка «Все панели» в рейке, когда за одним nginx несколько панелей. Пусто — без ссылки.
+HUB_URL = os.getenv("HUB_URL", "").strip()
+if HUB_URL and not re.match(r"(/|https?://)", HUB_URL):
+    raise ValueError(f"HUB_URL «{HUB_URL}»: укажите путь (например, /) или адрес http(s)://…")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 if not DATA_DIR.is_absolute():
