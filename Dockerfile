@@ -10,9 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 \
 
 WORKDIR /app
 
-# зависимости отдельным слоем — пересобираются только при смене requirements.txt
+# зависимости отдельным слоем — пересобираются только при смене requirements.txt;
+# gcc нужен только для сборки tgcrypto и удаляется в том же слое
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y gcc libc6-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY static ./static
