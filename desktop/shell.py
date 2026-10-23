@@ -222,6 +222,11 @@ class ShellWindow(QMainWindow):
         self.profile = QWebEngineProfile("tg-panel", QApplication.instance())
         self.profile.setPersistentStoragePath(str(data_dir / "webengine"))
         self.profile.setCachePath(str(data_dir / "webengine-cache"))
+        # после обновления — без старого app.js из кэша: до 0.11.2 панель отдавала файлы без Cache-Control,
+        # и встроенный браузер показывал прежний интерфейс
+        if settings.value("cache_version") != version:
+            self.profile.clearHttpCache()
+            settings.setValue("cache_version", version)
         self.profile.setNotificationPresenter(self.present_notification)
         self.profile.downloadRequested.connect(self.on_download)
         script = QWebEngineScript()

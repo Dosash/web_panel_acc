@@ -1342,4 +1342,14 @@ async def ws(websocket: WebSocket):
         manager.hub.sockets.discard(websocket)
 
 
-app.mount("/", StaticFiles(directory=BASE_DIR / "static", html=True), name="static")
+class PanelStatic(StaticFiles):
+    """Без Cache-Control браузер сам решает, сколько держать app.js, и после обновления показывает старый
+    интерфейс (в программе — пустое окно). no-cache: каждый раз сверка по ETag, без изменений — короткий 304."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", PanelStatic(directory=BASE_DIR / "static", html=True), name="static")
