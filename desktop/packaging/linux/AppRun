@@ -1,0 +1,4 @@
+#!/bin/sh
+# Точка входа AppImage: программа лежит в usr/lib/tg-panel
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/lib/tg-panel/tg-panel" "$@"

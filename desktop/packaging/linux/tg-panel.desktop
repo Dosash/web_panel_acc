@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=TG Panel
+GenericName=Telegram-аккаунты
+Comment=Несколько Telegram-аккаунтов в одном окне
+Exec=tg-panel
+Icon=tg-panel
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=telegram;tdata;accounts;
+StartupWMClass=tg-panel
+StartupNotify=true
