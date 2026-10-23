@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 
 
 def _env(name: str, old: str, default: str = "") -> str:
@@ -36,6 +36,11 @@ WEB_PREFIX = normalize_prefix(os.getenv("WEB_PREFIX", ""))
 HUB_URL = os.getenv("HUB_URL", "").strip()
 if HUB_URL and not re.match(r"(/|https?://)", HUB_URL):
     raise ValueError(f"HUB_URL «{HUB_URL}»: укажите путь (например, /) или адрес http(s)://…")
+# Проверка новой версии на GitHub (значок «Вышло обновление»). UPDATE_CHECK=0 — не проверять.
+# Адрес можно подменить — для проверки на своём сервере (TG_PANEL_UPDATE_URL — то же для программы)
+UPDATE_CHECK = os.getenv("UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")
+UPDATE_URL = _env("UPDATE_URL", "TG_PANEL_UPDATE_URL",
+                  "https://api.github.com/repos/Dosash/web_panel_acc/releases/latest")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 if not DATA_DIR.is_absolute():

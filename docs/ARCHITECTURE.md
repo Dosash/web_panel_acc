@@ -17,7 +17,7 @@
 ## Модули
 
 ### `app/config.py`
-Читает `.env` (`WEB_HOST`, `WEB_PORT`, `WEB_PASSWORD`, `WEB_PREFIX`, `HUB_URL`, `DATA_DIR`; старые имена
+Читает `.env` (`WEB_HOST`, `WEB_PORT`, `WEB_PASSWORD`, `WEB_PREFIX`, `HUB_URL`, `DATA_DIR`, `UPDATE_CHECK`; старые имена
 `HOST`, `PORT`, `PANEL_PASSWORD` — как запасные), создаёт папки `data/`, `data/cache/`, `data/tmp/`. При первом запуске генерирует
 `data/secret.key` (ключ Fernet для сессий) и `data/cookie.key` (подпись cookie), права `600`.
 
@@ -56,6 +56,18 @@ Fernet. Поле `api_json` — «отпечаток» клиента (api_id, �
   диалоги (`get_dialogs(limit=None)`), и запрос повторяется.
 - `media_slot(account_id)` — семафор (4 одновременные загрузки на аккаунт) против flood wait.
 - `message_dict` / `dialog_dict` / `media_info` — сериализация объектов Telethon в JSON для фронтенда.
+
+### `app/poster.py` — оформленные посты
+Сущности форматирования и цветные кнопки (`KeyboardButtonStyle`) из JSON редактора, отправка сырыми
+`SendMessageRequest`/`SendMediaRequest` (спойлер на медиа, `invert_media`). Inline-кнопки у сообщений обычного
+аккаунта Telegram отбрасывает, поэтому пост с кнопками отправляет бот канала: клиент Telethon по токену,
+подключённый один раз и закэшированный в памяти; токен и сессия бота — в таблице `post_bots` (зашифрованы Fernet).
+
+### `app/updates.py` — новая версия
+Последний релиз `Dosash/web_panel_acc` с GitHub API (`UPDATE_URL`), не чаще раза в 6 часов, результат в памяти.
+Сравнивает его с `VERSION` для `/api/update`. Фронтенд показывает значок справа внизу и окно «Обновление»:
+обновить программу (программа для компьютера сообщает свою версию в `window.TG_DESKTOP_APP` и ловит переход
+на `tg-desktop/update` — см. `desktop/shell.py`), панель на сервере (команда для `git pull`) или скачать с GitHub.
 
 ### `app/main.py`
 FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`, раздача `static/`.

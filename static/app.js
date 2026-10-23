@@ -84,6 +84,19 @@ const ICONS = {
   card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6.5 15h4"/>',
   wallet: '<path d="M19 7V5.5A1.5 1.5 0 0 0 17.5 4h-12A2.5 2.5 0 0 0 3 6.5v11A2.5 2.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/><path d="M21 9h-5a3 3 0 0 0 0 6h5z"/><path d="M16 12h.01"/>',
   external: '<path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>',
+  sparkles: '<path d="M10 3.5 11.6 8a3 3 0 0 0 1.9 1.9L18 11.5l-4.5 1.6a3 3 0 0 0-1.9 1.9L10 19.5 8.4 15a3 3 0 0 0-1.9-1.9L2 11.5l4.5-1.6A3 3 0 0 0 8.4 8z"/><path d="M19 2v4M17 4h4M19 17v4M17 19h4"/>',
+  bold: '<path d="M7 5h6a3.5 3.5 0 0 1 0 7H7zM7 12h7a3.5 3.5 0 0 1 0 7H7z"/>',
+  italic: '<path d="M19 4h-9M14 20H5M15 4 9 20"/>',
+  underline: '<path d="M6 4v7a6 6 0 0 0 12 0V4M4 21h16"/>',
+  strike: '<path d="M16 6.5C15.3 5 13.8 4 12 4c-2.5 0-4.5 1.5-4.5 3.6 0 1.6 1 2.6 2.7 3.4M4 12h16M15.5 14.5c.7.6 1 1.3 1 2.2 0 2-2 3.3-4.5 3.3-2 0-3.7-.9-4.5-2.5"/>',
+  code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/>',
+  quote: '<path d="M10 7H6a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3M20 7h-4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3"/>',
+  smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/>',
+  eraser: '<path d="m7 21-4-4a2 2 0 0 1 0-2.8L13.2 4a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L10 21z"/><path d="M21 21H7M9 11l6 6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  arrowL: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  arrowR: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  update: '<circle cx="12" cy="12" r="9"/><path d="M12 16.5v-9M8 11.5l4-4 4 4"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
 };
 function icon(name, cls = "") {
@@ -150,6 +163,8 @@ function renderText(text, entities) {
       out += esc(text.slice(pos, s));
       out += wrapEntity(e, build(s, en), text.slice(e.offset, e.end));
       pos = en;
+      // цитата и блок кода сами переносят строку — «\n» после них иначе дал бы лишнюю пустую строку
+      if ((e.type === "quote" || e.type === "pre") && text[pos] === "\n" && pos < end) pos++;
     }
     return out + esc(text.slice(pos, end));
   }
@@ -472,6 +487,7 @@ function renderChatHead() {
     ? `${icon("eye")}<span>Просмотр без подписки</span><button class="btn primary sm" type="button" id="join-current">${c.type === "channel" ? "Подписаться" : "Вступить"}</button>`
     : `${icon("lock")} Только чтение — вы не администратор канала`;
   bar.querySelector("#join-current")?.addEventListener("click", () => joinCurrent(c));
+  $("#post-btn").hidden = !(c.is_admin && (c.type === "channel" || c.type === "group"));
   const app = $("#bot-app");
   app.hidden = !c.webapp;
   if (c.webapp) app.querySelector(".t").textContent = c.webapp.text || "Приложение";
@@ -523,15 +539,18 @@ function mediaHtml(m) {
     default: return `<div class="misc muted">${esc(mediaLabel(md.type))}</div>`;
   }
 }
+// Цвет кнопки задаёт бот: primary — синяя, success — зелёная, danger — красная
+const KB_STYLES = new Set(["primary", "success", "danger"]);
 const BUTTON_ICON = { url: "link", webview: "grid", copy: "copy", switch: "reply", profile: "user" };
 function buttonsHtml(m) {
   if (!m.buttons?.length) return "";
   return `<div class="kb">${m.buttons.map((row, r) => `<div class="kb-row">${row.map((b, c) => {
     const ic = BUTTON_ICON[b.kind] ? `<span class="kb-ic">${icon(BUTTON_ICON[b.kind])}</span>` : "";
     const href = b.kind === "url" && safeUrl(b.url);
+    const cls = `kb-btn${KB_STYLES.has(b.style) ? ` st st-${b.style}` : ""}`;
     return href
-      ? `<a class="kb-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(b.url)}">${esc(b.text)}${ic}</a>`
-      : `<button class="kb-btn" data-row="${r}" data-col="${c}"${b.kind === "disabled" ? " disabled" : ""}>${esc(b.text)}${ic}</button>`;
+      ? `<a class="${cls}" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(b.url)}">${esc(b.text)}${ic}</a>`
+      : `<button class="${cls}" data-row="${r}" data-col="${c}"${b.kind === "disabled" ? " disabled" : ""}>${esc(b.text)}${ic}</button>`;
   }).join("")}</div>`).join("")}</div>`;
 }
 async function pressButton(m, row, col, btnEl) {
@@ -757,6 +776,564 @@ function upsertMessage(m, own = false) {
   updateToBottom();
 }
 
+// ---------- красивый пост ----------
+// Редактор для админов канала: оформление текста, медиа, цветные кнопки, предпросмотр как в ленте.
+// Inline-кнопки Telegram показывает только у сообщений ботов — пост с кнопками публикует бот канала.
+const POST_STYLES = [["", "Обычная"], ["primary", "Синяя"], ["success", "Зелёная"], ["danger", "Красная"]];
+const POST_EMOJI = "🔥 ✅ ❗️ ⚡️ 🚀 🎁 💎 📌 📢 👉 👇 ⭐️ ❤️ 👍 🎉 💬 📈 💰 🕒 📅 🏆 ✨ 🔔 ⚠️ ❌ ➡️ 🆕 💡 🎯 📲 🤝 😍 🙌 💯 🔗".split(" ");
+const POST_TOOLS = [
+  ["bold", "Жирный", "Ctrl+B"], ["italic", "Курсив", "Ctrl+I"], ["underline", "Подчёркнутый", "Ctrl+U"],
+  ["strike", "Зачёркнутый", "Ctrl+Shift+X"], "|", ["spoiler", "Спойлер", "Ctrl+Shift+P"],
+  ["code", "Моноширинный (копируется по нажатию)", "Ctrl+Shift+M"], ["quote", "Цитата", "Ctrl+Shift+."], "|",
+  ["link", "Ссылка", "Ctrl+K"], ["smile", "Эмодзи", ""], "|", ["eraser", "Убрать оформление", "Ctrl+Shift+N"],
+];
+const TOOL_ICON = { spoiler: "eye" };
+const postFiles = new Map();   // прикреплённый файл живёт в памяти до перезагрузки страницы, текст — в черновике
+const draftKey = c => `post:${c.account_id}:${c.id}`;
+let P = null;                  // открытый редактор
+
+// --- текст редактора ⇄ text + entities (смещения в UTF-16, как у Telegram и JavaScript) ---
+const BLOCK_TAGS = new Set(["DIV", "P", "BLOCKQUOTE", "PRE"]);
+function nodeEntity(el) {
+  const t = el.tagName, st = el.style || {};
+  if (t === "B" || t === "STRONG" || Number(st.fontWeight) >= 600 || st.fontWeight === "bold") return { type: "bold" };
+  if (t === "I" || t === "EM" || st.fontStyle === "italic") return { type: "italic" };
+  if (t === "U" || t === "INS" || /underline/.test(st.textDecoration || "")) return { type: "underline" };
+  if (t === "S" || t === "STRIKE" || t === "DEL" || /line-through/.test(st.textDecoration || "")) return { type: "strike" };
+  if (t === "CODE" && el.parentElement?.tagName !== "PRE") return { type: "code" };
+  if (t === "PRE") return { type: "pre" };
+  if (t === "BLOCKQUOTE") return { type: "quote" };
+  if (t === "A" && el.getAttribute("href")) return { type: "link", url: el.getAttribute("href") };
+  if (el.classList?.contains("spoiler")) return { type: "spoiler" };
+  return null;
+}
+function editorValue(root) {
+  let text = "";
+  const entities = [];
+  const newline = () => { if (text && !text.endsWith("\n")) text += "\n"; };
+  (function walk(node) {
+    if (node.nodeType === 3) { text += node.nodeValue.replace(/\u200b/g, "").replace(/\u00a0/g, " "); return; }
+    if (node.nodeType !== 1) return;
+    if (node.tagName === "BR") {
+      // последний <br> в непустой строке — заглушка браузера, а не перевод строки
+      const p = node.parentElement;
+      if (!(node === p.lastChild && p !== root && BLOCK_TAGS.has(p.tagName) && p.childNodes.length > 1)) text += "\n";
+      return;
+    }
+    const block = BLOCK_TAGS.has(node.tagName) && node !== root;
+    if (block) newline();
+    const start = text.length, ent = node === root ? null : nodeEntity(node);
+    node.childNodes.forEach(walk);
+    let end = text.length;
+    while (end > start && text[end - 1] === "\n") end--;
+    if (ent && end > start) entities.push({ ...ent, offset: start, length: end - start });
+    if (block) newline();
+  })(root);
+  const trimmed = text.replace(/\s+$/, "");
+  const clean = entities.map(e => ({ ...e, length: Math.min(e.offset + e.length, trimmed.length) - e.offset }))
+    .filter(e => e.length > 0).sort((a, b) => a.offset - b.offset || b.length - a.length);
+  return { text: trimmed, entities: clean };
+}
+function editorLoad(root, text, entities) {
+  root.innerHTML = entities?.length ? renderText(text, entities) : esc(text || "");
+  root.querySelectorAll("a").forEach(a => a.removeAttribute("target"));
+}
+
+// --- команды панели ---
+function edRange() {
+  const s = getSelection();
+  if (!s.rangeCount || !P?.ed.contains(s.getRangeAt(0).commonAncestorContainer)) return null;
+  return s.getRangeAt(0);
+}
+function closestIn(node, selector) {
+  const el = node?.nodeType === 1 ? node : node?.parentElement;
+  const hit = el?.closest(selector);
+  return hit && P.ed.contains(hit) && hit !== P.ed ? hit : null;
+}
+function unwrap(el) { el.replaceWith(...el.childNodes); }
+function selectNode(el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+function toggleWrap(selector, make) {
+  const r = edRange(); if (!r) return;
+  const host = closestIn(r.commonAncestorContainer, selector);
+  if (host) { unwrap(host); return postChanged(); }
+  if (r.collapsed) return toast("Сначала выделите текст", true);
+  const el = make();
+  el.appendChild(r.extractContents());
+  r.insertNode(el);
+  el.querySelectorAll(selector).forEach(unwrap);   // вложенный спойлер в спойлере не нужен
+  selectNode(el); postChanged();
+}
+function toggleQuote() {
+  const r = edRange(); if (!r) return;
+  const host = closestIn(r.commonAncestorContainer, "blockquote");
+  if (host) { unwrap(host); return postChanged(); }
+  const bq = document.createElement("blockquote");
+  if (r.collapsed) bq.innerHTML = "<br>"; else bq.appendChild(r.extractContents());
+  r.insertNode(bq);
+  if (!bq.nextSibling) bq.after(document.createElement("br"));   // чтобы было куда поставить курсор после цитаты
+  const s = getSelection(), nr = document.createRange();
+  nr.selectNodeContents(bq); if (r.collapsed) nr.collapse(true);
+  s.removeAllRanges(); s.addRange(nr); postChanged();
+}
+function clearFormat() {
+  const r = edRange(); if (!r) return;
+  document.execCommand("removeFormat"); document.execCommand("unlink");
+  P.ed.querySelectorAll(".spoiler, blockquote, code, pre").forEach(el => { if (r.intersectsNode(el)) unwrap(el); });
+  postChanged();
+}
+function postTool(name) {
+  P.ed.focus();
+  if (P.savedRange) { const s = getSelection(); s.removeAllRanges(); s.addRange(P.savedRange); }
+  const cmd = { bold: "bold", italic: "italic", underline: "underline", strike: "strikeThrough" }[name];
+  if (cmd) { document.execCommand(cmd); return postChanged(); }
+  if (name === "spoiler") return toggleWrap(".spoiler", () => Object.assign(document.createElement("span"), { className: "spoiler" }));
+  if (name === "code") return toggleWrap("code", () => document.createElement("code"));
+  if (name === "quote") return toggleQuote();
+  if (name === "eraser") return clearFormat();
+  if (name === "link") return openLinkRow();
+  if (name === "smile") { P.root.querySelector(".pe-emoji").hidden ^= true; P.root.querySelector(".pe-link").hidden = true; }
+}
+function openLinkRow() {
+  const r = edRange(); if (!r) return toast("Поставьте курсор в текст", true);
+  const a = closestIn(r.commonAncestorContainer, "a");
+  if (!a && r.collapsed) return toast("Выделите слова, которые станут ссылкой", true);
+  P.savedRange = r.cloneRange();
+  const row = P.root.querySelector(".pe-link"), input = row.querySelector("input");
+  P.root.querySelector(".pe-emoji").hidden = true;
+  row.hidden = false; row.querySelector("[data-l=remove]").hidden = !a;
+  input.value = a?.getAttribute("href") || ""; input.focus();
+}
+function applyLink(remove) {
+  const row = P.root.querySelector(".pe-link"), raw = row.querySelector("input").value.trim();
+  const url = remove ? "" : safeUrl(raw);
+  if (!remove && !url) return toast("Ссылка должна начинаться с https://, t.me/ или tg://", true);
+  P.ed.focus();
+  const s = getSelection(); s.removeAllRanges(); if (P.savedRange) s.addRange(P.savedRange);
+  const a = closestIn(P.savedRange?.commonAncestorContainer, "a");
+  if (remove) { if (a) unwrap(a); }
+  else if (a) a.setAttribute("href", url);
+  else document.execCommand("createLink", false, url);
+  row.hidden = true; P.savedRange = null; postChanged();
+}
+// Код, спойлер и ссылка не растягиваются на текст, который печатают сразу после них (как в Telegram)
+const CLOSED_INLINE = "code, .spoiler, a";
+function inlineHostAtCaret() {
+  const r = edRange();
+  if (!r || !r.collapsed) return null;
+  const host = closestIn(r.endContainer, CLOSED_INLINE);
+  return host && caretAtEnd(host) ? host : null;
+}
+function caretAfter(node) {
+  const r = document.createRange(); r.setStartAfter(node); r.collapse(true);
+  getSelection().removeAllRanges(); getSelection().addRange(r);
+}
+function postBeforeInput(e) {
+  if (e.inputType !== "insertText" || !e.data) return;
+  const host = inlineHostAtCaret(); if (!host) return;
+  e.preventDefault();
+  const t = document.createTextNode(e.data);
+  host.after(t); caretAfter(t); postChanged();
+}
+function postKeydown(e) {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === "Enter") { e.preventDefault(); return sendPost(); }
+  if (mod && e.shiftKey) {
+    // Period — «.» в английской раскладке, Slash — та же клавиша «.» в русской
+    const tool = { KeyX: "strike", KeyP: "spoiler", KeyM: "code", Period: "quote", Slash: "quote", KeyN: "eraser" }[e.code]
+      || (e.key === "." || e.key === ">" ? "quote" : "");
+    if (tool) { e.preventDefault(); return postTool(tool); }
+  }
+  if (mod && !e.shiftKey && e.code === "KeyK") { e.preventDefault(); return openLinkRow(); }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    const r = edRange(), bq = r && closestIn(r.endContainer, "blockquote");
+    if (bq && P.enterQuote === bq && caretAtEnd(bq)) {
+      // двойной Enter в конце цитаты — выход из неё на новую строку
+      // убираем пустые строки в конце цитаты: <br> или «\n» — смотря как браузер вставил перевод строки
+      while (bq.lastChild) {
+        const n = bq.lastChild;
+        if (n.nodeName === "BR" || !n.textContent.replace(/[\u200b\n]/g, "")) { n.remove(); continue; }
+        if (n.nodeType === 3) n.nodeValue = n.nodeValue.replace(/[\u200b\n]+$/, "");
+        break;
+      }
+      const line = document.createElement("div"); line.innerHTML = "<br>";
+      bq.after(line);
+      const nr = document.createRange(); nr.setStart(line, 0); nr.collapse(true);
+      getSelection().removeAllRanges(); getSelection().addRange(nr);
+      P.enterQuote = null; return postChanged();
+    }
+    const host = inlineHostAtCaret();
+    if (host) { const t = document.createTextNode("\u200b"); host.after(t); caretAfter(t); }
+    document.execCommand("insertLineBreak");
+    P.enterQuote = bq && caretAtEnd(bq) ? bq : null;
+    return;
+  }
+  P.enterQuote = null;
+}
+function caretAtEnd(el) {
+  const r = edRange(); if (!r) return false;
+  const rest = document.createRange(); rest.selectNodeContents(el); rest.setStart(r.endContainer, r.endOffset);
+  return !rest.toString().replace(/[\u200b\n]/g, "");   // хвостовой «\n» — заглушка браузера для пустой строки
+}
+
+// --- состояние, черновик, предпросмотр ---
+function postState() {
+  const { text, entities } = editorValue(P.ed), f = P.root.querySelector(".pe-opts");
+  return {
+    text, entities, buttons: P.buttons.map(row => row.map(b => ({ text: b.text, style: b.style, ...(b.kind === "copy" ? { copy: b.copy } : { url: b.url }) }))),
+    silent: f.silent.checked, no_preview: f.no_preview.checked, invert: f.invert.checked, spoiler: f.spoiler.checked,
+    schedule: f.schedule_on.checked && f.schedule.value ? new Date(f.schedule.value).getTime() / 1000 : null,
+  };
+}
+function savePostDraft() {
+  clearTimeout(P.saveTimer);
+  if (P.sent) return;
+  writePref(draftKey(P.c), JSON.stringify({ ...postState(), kinds: P.buttons.map(r => r.map(b => b.kind)), schedule: null }));
+}
+function postChanged() {
+  if (!P) return;
+  clearTimeout(P.saveTimer);
+  P.saveTimer = setTimeout(savePostDraft, 400);
+  P.ed.classList.toggle("is-empty", !P.ed.textContent.replace(/\u200b/g, "") && !P.ed.querySelector("blockquote"));
+  renderPostPreview();
+}
+function postLimit() { return P.file ? 1024 : 4096; }
+function renderPostPreview() {
+  const st = postState(), box = P.root.querySelector(".pe-preview");
+  const f = P.file, kind = f ? (f.type.startsWith("image/") ? "photo" : f.type.startsWith("video/") ? "video" : "file") : "";
+  const media = !f ? "" : kind === "photo" ? `<img src="${P.fileUrl}" alt="">`
+    : kind === "video" ? `<video src="${P.fileUrl}" muted playsinline preload="metadata"></video>`
+    : `<div class="file"><span class="ico">${icon("file")}</span><span><b>${esc(f.name)}</b><span class="small" style="opacity:.75">${fmtSize(f.size)}</span></span></div>`;
+  const spoiler = st.spoiler && (kind === "photo" || kind === "video");
+  const mediaBlock = media ? `<div class="media${spoiler ? " spoiler-media" : ""}">${media}${spoiler ? `<span class="spoiler-cover">${icon("eye")}Спойлер</span>` : ""}</div>` : "";
+  const textBlock = st.text ? renderText(st.text, st.entities) : (media ? "" : `<span class="muted">Текст поста появится здесь</span>`);
+  const kb = buttonsHtml({ buttons: P.buttons.map(r => r.map(b => ({ ...b, kind: b.kind === "copy" ? "copy" : "url", url: b.url || "#" }))) });
+  const time = st.schedule ? new Date(st.schedule * 1000) : new Date();
+  box.innerHTML = `<div class="msg grp-first grp-last${media && !st.text ? " media-only" : ""}"><div class="bubble">${
+    st.invert ? textBlock + mediaBlock : mediaBlock + textBlock}<span class="meta">${icon("eye")}1 · ${
+    st.schedule ? icon("clock") : ""}${time.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}</span></div>${kb}</div>`;
+  box.querySelectorAll(".kb-btn").forEach(b => { b.removeAttribute("href"); b.tabIndex = -1; });
+  const len = st.text.length, lim = postLimit(), cnt = P.root.querySelector(".pe-count");
+  cnt.textContent = `${len.toLocaleString("ru")} / ${lim.toLocaleString("ru")}`;
+  cnt.classList.toggle("over", len > lim);
+  const hasButtons = P.buttons.some(r => r.length);
+  P.root.querySelector(".pe-bot").hidden = !hasButtons;
+  const sch = P.root.querySelector(".pe-opts [name=schedule_on]");
+  sch.disabled = hasButtons;
+  if (hasButtons && sch.checked) { sch.checked = false; P.root.querySelector(".pe-opts [name=schedule]").hidden = true; }
+  sch.closest("label").title = hasButtons ? "Пост с кнопками публикует бот, а боты не умеют отложенную отправку" : "";
+  const send = P.root.querySelector(".pe-send");
+  send.innerHTML = `${icon(st.schedule ? "clock" : "send")}${st.schedule ? "Запланировать" : "Опубликовать"}`;
+  P.root.querySelector(".pe-via").textContent = hasButtons
+    ? (P.info?.bot ? `Опубликует бот @${P.info.bot.username}` : "Нужен бот для кнопок") : `От имени канала · ${acc(P.c.account_id)?.name || ""}`;
+}
+
+// --- медиа ---
+function setPostFile(file) {
+  if (P.fileUrl) URL.revokeObjectURL(P.fileUrl);
+  P.file = file || null; P.fileUrl = file ? URL.createObjectURL(file) : "";
+  if (file) postFiles.set(draftKey(P.c), file); else postFiles.delete(draftKey(P.c));
+  const box = P.root.querySelector(".pe-media"), visual = file && /^(image|video)\//.test(file.type);
+  box.innerHTML = file
+    ? `<div class="pe-file">${visual && file.type.startsWith("image/") ? `<img src="${P.fileUrl}" alt="">` : `<span class="ico">${icon(visual ? "play" : "file")}</span>`}
+        <span class="grow"><b>${esc(file.name)}</b><span class="small muted">${fmtSize(file.size)}</span></span>
+        <button class="icon-btn sm" type="button" data-m="remove" title="Убрать">${icon("x")}</button></div>`
+    : `<label class="btn sm pe-attach">${icon("image")}Фото, видео или файл<input type="file" hidden></label>`;
+  box.querySelector("input")?.addEventListener("change", e => e.target.files[0] && setPostFile(e.target.files[0]));
+  box.querySelector("[data-m=remove]")?.addEventListener("click", () => setPostFile(null));
+  P.root.querySelector(".pe-opts [name=spoiler]").closest("label").hidden = !visual;
+  P.root.querySelector(".pe-opts [name=invert]").nextElementSibling.firstChild.textContent = file ? "Текст над медиа" : "Превью ссылки над текстом";
+  renderPostPreview();
+}
+
+// --- кнопки ---
+function renderPostButtons() {
+  const box = P.root.querySelector(".pe-rows"), sel = P.sel;
+  box.innerHTML = P.buttons.map((row, r) => `<div class="pe-row">${row.map((b, c) =>
+    `<button type="button" class="kb-btn${KB_STYLES.has(b.style) ? ` st st-${b.style}` : ""}${sel && sel[0] === r && sel[1] === c ? " sel" : ""}" data-r="${r}" data-c="${c}">${esc(b.text || "Без текста")}</button>`).join("")
+    }${row.length < 8 ? `<button type="button" class="pe-add-btn" data-add="${r}" title="Кнопка в этот ряд">${icon("plus")}</button>` : ""}</div>`).join("");
+  const form = P.root.querySelector(".pe-btn-form"), b = sel && P.buttons[sel[0]]?.[sel[1]];
+  form.hidden = !b;
+  if (b) {
+    form.querySelector("[name=text]").value = b.text;
+    form.querySelector("[name=url]").value = b.url || "";
+    form.querySelector("[name=copy]").value = b.copy || "";
+    form.querySelectorAll("[data-kind]").forEach(x => x.classList.toggle("active", x.dataset.kind === b.kind));
+    form.querySelector(".pe-url").hidden = b.kind === "copy";
+    form.querySelector(".pe-copy").hidden = b.kind !== "copy";
+    form.querySelectorAll("[data-style]").forEach(x => x.classList.toggle("on", x.dataset.style === (b.style || "")));
+    form.querySelector("[data-move=left]").disabled = sel[1] === 0;
+    form.querySelector("[data-move=right]").disabled = sel[1] === P.buttons[sel[0]].length - 1;
+  }
+  P.root.querySelector(".pe-add-row").innerHTML = `${icon("plus")}${P.buttons.length ? "Новый ряд кнопок" : "Добавить кнопку"}`;
+  renderPostPreview();
+}
+function addPostButton(r) {
+  if (P.info && !P.info.buttons_supported) return toast("Кнопки под постами работают только в каналах и супергруппах", true);
+  if (r == null) { P.buttons.push([]); r = P.buttons.length - 1; }
+  P.buttons[r].push({ text: "", url: "", copy: "", kind: "url", style: "" });
+  P.sel = [r, P.buttons[r].length - 1];
+  renderPostButtons(); postChanged();
+  P.root.querySelector(".pe-btn-form [name=text]").focus();
+}
+function editPostButton(patch) {
+  const b = P.sel && P.buttons[P.sel[0]]?.[P.sel[1]]; if (!b) return;
+  Object.assign(b, patch);
+  const el = P.root.querySelector(`.pe-rows [data-r="${P.sel[0]}"][data-c="${P.sel[1]}"]`);
+  if (el && "text" in patch && Object.keys(patch).length === 1) { el.textContent = b.text || "Без текста"; renderPostPreview(); }
+  else renderPostButtons();
+  postChanged();
+}
+function movePostButton(dir) {
+  const [r, c] = P.sel, row = P.buttons[r], to = c + dir;
+  if (to < 0 || to >= row.length) return;
+  [row[c], row[to]] = [row[to], row[c]]; P.sel = [r, to];
+  renderPostButtons(); postChanged();
+}
+function deletePostButton() {
+  const [r, c] = P.sel;
+  P.buttons[r].splice(c, 1);
+  if (!P.buttons[r].length) P.buttons.splice(r, 1);
+  P.sel = null; renderPostButtons(); postChanged();
+}
+
+// --- бот для кнопок ---
+function renderPostBot() {
+  const box = P.root.querySelector(".pe-bot"), info = P.info;
+  if (!info) { box.innerHTML = `<div class="muted small">Проверяю бота канала…</div>`; return; }
+  if (!info.buttons_supported) { box.innerHTML = `<div class="pe-note warn">${icon("alert")}<span>В обычных группах кнопки не работают — только в каналах и супергруппах.</span></div>`; return; }
+  const bot = info.bot;
+  if (bot && bot.admin !== false) {
+    box.innerHTML = `<div class="pe-note ok">${icon("bot")}<span>Пост с кнопками опубликует <b>@${esc(bot.username)}</b> — он администратор канала.</span>
+      <button class="btn sm" type="button" data-b="off">Отключить</button></div>`;
+  } else if (bot) {
+    box.innerHTML = `<div class="pe-note warn">${icon("alert")}<span><b>@${esc(bot.username)}</b> не может публиковать: он не администратор канала${info.can_promote ? "" : ". Добавьте его вручную с правом «Публикация сообщений»"}.</span>
+      ${info.can_promote ? `<button class="btn sm primary" type="button" data-b="promote">Назначить админом</button>` : ""}<button class="btn sm" type="button" data-b="off">Другой бот</button></div>`;
+  } else {
+    box.innerHTML = `<div class="pe-note">${icon("bot")}<span>Telegram показывает кнопки только у сообщений ботов, поэтому такой пост опубликует ваш бот.
+        Создайте его в <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> командой <code>/newbot</code> и вставьте токен —
+        ${info.can_promote ? "панель сама назначит бота админом канала с правом публикации." : "затем добавьте бота админом канала с правом «Публикация сообщений»."}</span></div>
+      <form class="pe-token"><input name="token" placeholder="123456789:AAH…" autocomplete="off" spellcheck="false"><button class="btn sm primary" type="submit">Подключить</button></form>`;
+  }
+  box.querySelector(".pe-token")?.addEventListener("submit", e => { e.preventDefault(); connectPostBot(e.target.token.value.trim(), e.submitter); });
+  box.querySelector("[data-b=promote]")?.addEventListener("click", e => connectPostBot("", e.currentTarget));
+  box.querySelector("[data-b=off]")?.addEventListener("click", async () => {
+    try { await api(`${chatPath(P.c.account_id, P.c.id)}/post/bot`, { method: "DELETE" }); P.info.bot = null; renderPostBot(); renderPostPreview(); }
+    catch (e) { toast(e.message, true); }
+  });
+}
+async function connectPostBot(token, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    P.info = await api(`${chatPath(P.c.account_id, P.c.id)}/post/bot`, { method: "POST", body: { token } });
+    toast(`Бот @${P.info.bot.username} подключён`);
+  } catch (e) {
+    toast(e.message, true);
+    try { P.info = await api(`${chatPath(P.c.account_id, P.c.id)}/post`); } catch { /* оставляем как было */ }
+  }
+  if (P) { renderPostBot(); renderPostPreview(); }
+}
+
+// --- отправка ---
+async function sendPost() {
+  const st = postState(), c = P.c;
+  if (!st.text && !P.file) return toast("Пост пустой: напишите текст или прикрепите медиа", true);
+  if (st.text.length > postLimit()) return toast(`Слишком длинно: ${st.text.length} из ${postLimit()} символов`, true);
+  const empty = P.buttons.flat().find(b => !b.text.trim() || (b.kind === "copy" ? !b.copy.trim() : !safeUrl(b.url)));
+  if (empty) return toast(empty.text.trim() ? `Кнопка «${empty.text}»: ${empty.kind === "copy" ? "укажите текст для копирования" : "укажите ссылку"}` : "У кнопки нет текста", true);
+  const btn = P.root.querySelector(".pe-send"); btn.disabled = true; btn.classList.add("loading");
+  const fd = new FormData();
+  fd.append("data", JSON.stringify(st));
+  if (P.file) fd.append("file", P.file);
+  try {
+    const res = await api(`${chatPath(c.account_id, c.id)}/post`, { method: "POST", form: fd });
+    P.sent = true;
+    try { localStorage.removeItem(draftKey(c)); } catch { /* приватный режим */ }
+    postFiles.delete(draftKey(c));
+    closeModal();
+    if (res.scheduled) toast(`Пост запланирован на ${new Date(st.schedule * 1000).toLocaleString("ru", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}`);
+    else { upsertMessage(res, true); toast("Пост опубликован"); }
+  } catch (e) {
+    toast(e.message, true);
+    if (P) { btn.disabled = false; btn.classList.remove("loading"); }
+  }
+}
+
+const POST_HINTS = `
+  <h4>Оформление</h4>
+  <ul>
+    <li>Выделите текст и нажмите кнопку на панели. Повторное нажатие снимает оформление.</li>
+    <li><kbd>Ctrl+B</kbd> жирный, <kbd>Ctrl+I</kbd> курсив, <kbd>Ctrl+U</kbd> подчёркнутый, <kbd>Ctrl+Shift+X</kbd> зачёркнутый.</li>
+    <li><kbd>Ctrl+Shift+P</kbd> спойлер, <kbd>Ctrl+Shift+M</kbd> моноширинный, <kbd>Ctrl+Shift+.</kbd> цитата, <kbd>Ctrl+K</kbd> ссылка, <kbd>Ctrl+Shift+N</kbd> убрать всё.</li>
+    <li>Из цитаты выходят двойным <kbd>Enter</kbd>. <kbd>Ctrl+Enter</kbd> — опубликовать.</li>
+    <li>Вставленный текст очищается от чужого оформления — форматируйте здесь.</li>
+  </ul>
+  <h4>Как сделать пост красивым</h4>
+  <ul>
+    <li>Первая строка — заголовок: коротко, жирным, можно с эмодзи.</li>
+    <li>Абзацы по 2–3 строки, между ними пустая строка — так пост легко читать с телефона.</li>
+    <li>Эмодзи — вместо маркеров списка (✅ 👉 📌), не больше одного-двух на строку.</li>
+    <li>Главную мысль — в цитату, ответ или интригу — под спойлер.</li>
+    <li>Промокоды и команды — моноширинным: в Telegram они копируются нажатием.</li>
+    <li>Прячьте ссылки в слова вместо длинных адресов.</li>
+    <li>Фото или видео делает пост заметнее в ленте; «Текст над медиа» — когда текст важнее картинки.</li>
+  </ul>
+  <h4>Кнопки</h4>
+  <ul>
+    <li>Кнопки Telegram показывает только у сообщений ботов — пост с кнопками опубликует бот, который админ канала.</li>
+    <li>Синяя — главное действие, зелёная — «Купить», «Подписаться», «Участвовать», красная — срочное или важное.</li>
+    <li>Цветными лучше делать 1–2 кнопки, остальные — обычными, иначе цвет перестаёт выделять главное.</li>
+    <li>Текст кнопки — 1–3 слова. В ряд до 8 кнопок, но на телефоне удобнее 1–2.</li>
+    <li>«Копировать текст» — кнопка кладёт промокод или адрес кошелька в буфер обмена.</li>
+    <li>Старые версии Telegram покажут цветные кнопки обычными.</li>
+  </ul>
+  <h4>Ограничения</h4>
+  <ul>
+    <li>Текст — до 4096 символов, подпись к фото или видео — до 1024.</li>
+    <li>Отложить можно только пост без кнопок: боты не умеют отложенную отправку.</li>
+    <li>Пост с кнопками потом редактирует тот же бот — правка из панели меняет только текст.</li>
+  </ul>`;
+
+function postEditor() {
+  const c = S.current; if (!c) return;
+  let draft = {};
+  try { draft = JSON.parse(readPref(draftKey(c), "{}")) || {}; } catch { draft = {}; }
+  const tools = POST_TOOLS.map(t => t === "|" ? `<span class="pe-sep"></span>`
+    : `<button type="button" class="pe-tool" data-tool="${t[0]}" title="${esc(t[1])}${t[2] ? ` (${t[2]})` : ""}">${icon(TOOL_ICON[t[0]] || t[0])}</button>`).join("");
+  modal("Оформленный пост", `
+    <div class="post-ed">
+      <div class="pe-main">
+        <div class="pe-box">
+          <div class="pe-toolbar">${tools}</div>
+          <div class="pe-link" hidden><input placeholder="https://… или t.me/…" spellcheck="false"><button class="btn sm primary" type="button" data-l="ok">Готово</button><button class="btn sm" type="button" data-l="remove">Убрать</button></div>
+          <div class="pe-emoji" hidden>${POST_EMOJI.map(e => `<button type="button">${e}</button>`).join("")}</div>
+          <div class="pe-text" contenteditable="true" spellcheck="true" data-placeholder="Заголовок поста&#10;&#10;Текст: выделите слова и выберите оформление на панели сверху"></div>
+          <div class="pe-count small"></div>
+        </div>
+        <section class="pe-sec"><div class="pe-sec-head"><b>Медиа</b><span class="muted small">одно фото, видео или файл</span></div><div class="pe-media"></div></section>
+        <section class="pe-sec">
+          <div class="pe-sec-head"><b>Кнопки</b><span class="muted small">под постом, можно цветные</span></div>
+          <div class="pe-rows"></div>
+          <button class="btn sm pe-add-row" type="button"></button>
+          <div class="pe-btn-form form" hidden>
+            <label>Текст кнопки<input name="text" maxlength="64" placeholder="Например: Подписаться"></label>
+            <div class="segmented"><button type="button" class="seg" data-kind="url">${icon("link")}Ссылка</button><button type="button" class="seg" data-kind="copy">${icon("copy")}Копировать текст</button></div>
+            <label class="pe-url">Ссылка<input name="url" placeholder="https://… или t.me/канал" spellcheck="false"></label>
+            <label class="pe-copy">Что копировать<input name="copy" maxlength="256" placeholder="Промокод, адрес, номер карты…"></label>
+            <div class="pe-styles"><span class="muted small">Цвет</span>${POST_STYLES.map(([v, t]) => `<button type="button" data-style="${v}" class="pe-style st-${v || "default"}" title="${t}"><i></i>${t}</button>`).join("")}</div>
+            <div class="pe-btn-actions">
+              <button class="icon-btn sm" type="button" data-move="left" title="Левее">${icon("arrowL")}</button>
+              <button class="icon-btn sm" type="button" data-move="right" title="Правее">${icon("arrowR")}</button>
+              <span class="grow"></span>
+              <button class="btn sm danger" type="button" data-del>${icon("trash")}Удалить</button>
+              <button class="btn sm" type="button" data-done>Готово</button>
+            </div>
+          </div>
+          <div class="pe-bot" hidden></div>
+        </section>
+        <section class="pe-sec">
+          <div class="pe-sec-head"><b>Публикация</b></div>
+          <div class="form"><form class="pe-opts checks" onsubmit="return false">
+            <label class="opt"><input type="checkbox" name="silent"><span>Без звука<span class="small muted"> — подписчики получат уведомление без звука</span></span></label>
+            <label class="opt"><input type="checkbox" name="no_preview"><span>Без превью ссылок</span></label>
+            <label class="opt"><input type="checkbox" name="invert"><span><span>Превью ссылки над текстом</span></span></label>
+            <label class="opt" hidden><input type="checkbox" name="spoiler"><span>Скрыть медиа под спойлером</span></label>
+            <label class="opt"><input type="checkbox" name="schedule_on"><span>Отложить публикацию</span></label>
+            <input type="datetime-local" name="schedule" hidden>
+          </form></div>
+        </section>
+      </div>
+      <aside class="pe-side">
+        <div class="pe-side-label muted small">Предпросмотр</div>
+        <div class="pe-preview"></div>
+        <details class="pe-hints"><summary>${icon("info")}Подсказки по оформлению</summary>${POST_HINTS}</details>
+      </aside>
+    </div>
+    <footer class="pe-foot">
+      <button class="btn sm" type="button" data-clear>${icon("trash")}Очистить</button>
+      <span class="pe-via muted small"></span>
+      <button class="btn primary pe-send" type="button"></button>
+    </footer>`, root => {
+    $("#modal .modal-card").classList.add("wide");
+    P = { c, root, ed: root.querySelector(".pe-text"), buttons: [], sel: null, file: null, fileUrl: "", info: null, savedRange: null };
+    document.execCommand("styleWithCSS", false, false);
+    editorLoad(P.ed, draft.text, draft.entities);
+    P.buttons = (draft.buttons || []).map((row, r) => row.map((b, i) => ({
+      text: b.text || "", url: b.url || "", copy: b.copy || "", style: b.style || "", kind: draft.kinds?.[r]?.[i] || (b.copy ? "copy" : "url") })));
+    const opts = root.querySelector(".pe-opts");
+    ["silent", "no_preview", "invert", "spoiler"].forEach(k => { opts[k].checked = !!draft[k]; });
+    // панель инструментов не забирает фокус у текста, иначе пропадёт выделение
+    root.querySelector(".pe-toolbar").addEventListener("mousedown", e => e.preventDefault());
+    root.querySelector(".pe-toolbar").addEventListener("click", e => { const b = e.target.closest("[data-tool]"); if (b) { P.savedRange = null; postTool(b.dataset.tool); } });
+    root.querySelector(".pe-emoji").addEventListener("mousedown", e => e.preventDefault());
+    root.querySelector(".pe-emoji").addEventListener("click", e => {
+      const b = e.target.closest("button"); if (!b) return;
+      if (!edRange()) { P.ed.focus(); const r = document.createRange(); r.selectNodeContents(P.ed); r.collapse(false); getSelection().removeAllRanges(); getSelection().addRange(r); }
+      document.execCommand("insertText", false, b.textContent); postChanged();
+    });
+    const link = root.querySelector(".pe-link");
+    link.querySelector("[data-l=ok]").onclick = () => applyLink(false);
+    link.querySelector("[data-l=remove]").onclick = () => applyLink(true);
+    link.querySelector("input").addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); applyLink(false); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); link.hidden = true; P.ed.focus(); }
+    });
+    P.ed.addEventListener("input", postChanged);
+    P.ed.addEventListener("keydown", postKeydown);
+    P.ed.addEventListener("beforeinput", postBeforeInput);
+    P.ed.addEventListener("paste", e => {
+      e.preventDefault();
+      document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+    });
+    P.ed.addEventListener("drop", e => {
+      const f = e.dataTransfer?.files?.[0];
+      if (f) { e.preventDefault(); setPostFile(f); }
+    });
+    // кнопки
+    root.querySelector(".pe-rows").addEventListener("click", e => {
+      const add = e.target.closest("[data-add]"); if (add) return addPostButton(Number(add.dataset.add));
+      const b = e.target.closest("[data-r]"); if (!b) return;
+      P.sel = [Number(b.dataset.r), Number(b.dataset.c)]; renderPostButtons();
+    });
+    root.querySelector(".pe-add-row").onclick = () => addPostButton(null);
+    const form = root.querySelector(".pe-btn-form");
+    form.querySelector("[name=text]").addEventListener("input", e => editPostButton({ text: e.target.value }));
+    form.querySelector("[name=url]").addEventListener("input", e => { P.buttons[P.sel[0]][P.sel[1]].url = e.target.value; postChanged(); });
+    form.querySelector("[name=copy]").addEventListener("input", e => { P.buttons[P.sel[0]][P.sel[1]].copy = e.target.value; postChanged(); });
+    form.querySelectorAll("[data-kind]").forEach(x => x.onclick = () => editPostButton({ kind: x.dataset.kind }));
+    form.querySelectorAll("[data-style]").forEach(x => x.onclick = () => editPostButton({ style: x.dataset.style }));
+    form.querySelector("[data-move=left]").onclick = () => movePostButton(-1);
+    form.querySelector("[data-move=right]").onclick = () => movePostButton(1);
+    form.querySelector("[data-del]").onclick = deletePostButton;
+    form.querySelector("[data-done]").onclick = () => { P.sel = null; renderPostButtons(); };
+    form.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); P.sel = null; renderPostButtons(); } });
+    // настройки
+    opts.addEventListener("change", e => {
+      if (e.target.name === "schedule_on") {
+        const dt = opts.schedule; dt.hidden = !e.target.checked;
+        if (e.target.checked && !dt.value) {
+          const d = new Date(Date.now() + 3600e3); d.setMinutes(0, 0, 0);
+          dt.value = new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+        }
+      }
+      postChanged();
+    });
+    root.querySelector("[data-clear]").onclick = () => {
+      if (!confirm("Очистить пост: текст, медиа и кнопки?")) return;
+      P.ed.innerHTML = ""; P.buttons = []; P.sel = null; setPostFile(null); renderPostButtons(); postChanged();
+    };
+    root.querySelector(".pe-send").onclick = sendPost;
+    setPostFile(postFiles.get(draftKey(c)) || null);
+    renderPostButtons(); renderPostBot(); postChanged();
+    api(`${chatPath(c.account_id, c.id)}/post`).then(info => {
+      if (P?.c !== c) return;
+      P.info = info; renderPostBot(); renderPostPreview();
+    }).catch(e => { if (P?.c === c) { P.info = { bot: null, buttons_supported: false, can_promote: false }; renderPostBot(); toast(e.message, true); } });
+    P.ed.focus();
+  });
+}
+$("#post-btn").onclick = postEditor;
+
 // ---------- realtime ----------
 function connectWS() {
   // адрес относительно страницы: панель может стоять не в корне сайта (WEB_PREFIX)
@@ -828,6 +1405,7 @@ function notify(ev) {
 
 // ---------- модальные окна ----------
 function modal(title, html, onMount) {
+  $("#modal .modal-card").className = "modal-card";
   $("#modal-title").textContent = title;
   $("#modal-body").innerHTML = html;
   $("#modal-body").removeAttribute("data-aid");   // с какого аккаунта открывать ссылки из окна — задаёт само окно
@@ -835,7 +1413,10 @@ function modal(title, html, onMount) {
   $("#modal").hidden = false;
   onMount?.($("#modal-body"));
 }
-function closeModal() { $("#modal").hidden = true; $("#modal-body").innerHTML = ""; }
+function closeModal() {
+  if (P) { savePostDraft(); if (P.fileUrl) URL.revokeObjectURL(P.fileUrl); P = null; }   // текст и кнопки поста остаются в черновике
+  $("#modal").hidden = true; $("#modal-body").innerHTML = "";
+}
 $("#modal-close").onclick = closeModal;
 $("#modal").addEventListener("mousedown", e => { if (e.target.id === "modal") closeModal(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden) closeModal(); });
@@ -1813,6 +2394,7 @@ function supportModal() {
     <div class="support-head"><div class="brand-mark" data-icon="plane"></div><div>
       <div class="name">TG Panel${S.version ? ` <span class="muted small">${esc(S.version)}</span>` : ""}</div>
       <div class="muted small">Автор — ${link("https://github.com/Dosash", "Dosash", "")} · лицензия MIT · ${link(REPO, "исходный код", "")}</div>
+      <div class="small upd-line">${updateLine()}</div>
     </div></div>
     <div class="section-title">${icon("heart")} Поддержать</div>
     <p class="support-text">Если панель пригодилась — можно поблагодарить автора. Это не обязательно, но очень приятно и помогает развивать проект.</p>
@@ -1826,6 +2408,127 @@ function supportModal() {
       link(url, `<span class="si" style="--c:${color}">${icon(ic)}</span><span><b>${title}</b><span class="small muted">${sub}</span></span>${icon("external")}`, "support-link")).join("")}</div>`);
 }
 $("#support").onclick = supportModal;
+
+// ---------- обновления ----------
+// Сервер раз в 6 часов смотрит последний релиз на GitHub. Значок справа внизу — когда новее панель на
+// сервере или программа для компьютера; оттуда — обновить программу, панель на сервере или скачать с GitHub
+const UPD = { info: null, intro: false };
+const verNum = v => (String(v || "").match(/\d+/g) || []).slice(0, 3).map(Number);
+function isNewer(a, b) {
+  const x = verNum(a), y = verNum(b);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+// Программа для компьютера с 0.11 сообщает свою версию и режим и обновляется переходом на tg-desktop/update.
+// Программа 0.10 знает только TG_DESKTOP; с этой страницей она может быть лишь в режиме «на моём сервере»
+// (в своём режиме у неё старый интерфейс без значка)
+function desktopApp() {
+  return window.TG_DESKTOP_APP || (window.TG_DESKTOP ? { version: "0.10.0", mode: "remote", update: false } : null);
+}
+function updateTargets(u) {
+  const app = desktopApp(), local = app?.mode === "local";   // свой сервер программы обновляется вместе с ней
+  return { app: !!app && (local ? u.available : isNewer(u.latest, app.version)), server: !!u.available && !local };
+}
+async function checkUpdate(force = false) {
+  try { UPD.info = await api(`api/update${force ? "?force=1" : ""}`); } catch { return null; }
+  renderUpdateBadge();
+  return UPD.info;
+}
+function renderUpdateBadge() {
+  const u = UPD.info, b = $("#update-badge"), t = u?.latest ? updateTargets(u) : {};
+  const show = (t.app || t.server) && readPref("update_hidden", "") !== u.latest;
+  b.hidden = !show;
+  $("#app").classList.toggle("has-update", !!show);
+  if (!show) return;
+  b.querySelector(".t").textContent = `Обновление ${u.latest}`;
+  b.title = `Вышла TG Panel ${u.latest}`;
+  if (!UPD.intro && $("#chat").classList.contains("empty")) {   // при первом показе — с подписью (пока подпись не закрывает поле ввода), потом только значок
+    UPD.intro = true;
+    b.classList.add("open");
+    setTimeout(() => b.classList.remove("open"), 6000);
+  }
+}
+$("#update-badge").onclick = () => updateModal();
+function updateLine() {
+  const u = UPD.info;
+  if (!u?.enabled) return "";
+  const t = u.latest ? updateTargets(u) : {};
+  if (t.app || t.server) return `<a href="#" data-upd="open">${icon("update")} Доступна версия ${esc(u.latest)}</a>`;
+  return `<span class="muted">${u.latest ? "Последняя версия · " : ""}</span><a href="#" data-upd="check">Проверить обновления</a>`;
+}
+document.addEventListener("click", async e => {
+  const a = e.target.closest("[data-upd]");
+  if (!a) return;
+  e.preventDefault();
+  if (a.dataset.upd === "open") return updateModal();
+  a.textContent = "Проверяем…";
+  const u = await checkUpdate(true);
+  if (!u) { a.textContent = "Проверить обновления"; return toast("Не удалось проверить обновления", true); }
+  const t = u.latest ? updateTargets(u) : {};
+  if (t.app || t.server) return updateModal();
+  if (u.error && !u.latest) { a.textContent = "Проверить обновления"; return toast(`GitHub не ответил: ${u.error}`, true); }
+  a.parentElement.innerHTML = updateLine();
+  toast(`У вас последняя версия${u.latest ? ` — ${u.latest}` : ""}`);
+});
+// Описание релиза — раздел CHANGELOG.md: абзацы, списки (с переносом строк), **жирный**, `код`
+function releaseNotes(md) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const blocks = [];
+  let list = null;
+  for (const line of String(md).replace(/\r/g, "").split("\n")) {
+    if (/^\s*[-*] /.test(line)) { if (!list) blocks.push(list = []); list.push(line.replace(/^\s*[-*] /, "")); }
+    else if (list && /^\s+\S/.test(line)) list[list.length - 1] += " " + line.trim();
+    else { list = null; if (line.trim()) blocks.push(line.replace(/^#+\s*/, "")); }
+  }
+  return blocks.map(b => Array.isArray(b) ? `<ul>${b.map(li => `<li>${inline(li)}</li>`).join("")}</ul>` : `<p>${inline(b)}</p>`).join("");
+}
+function updateModal() {
+  const u = UPD.info;
+  if (!u?.latest) return;
+  const t = updateTargets(u), app = desktopApp();
+  const date = u.published_at ? new Date(u.published_at).toLocaleDateString("ru", { day: "numeric", month: "long", year: "numeric" }) : "";
+  const ver = (label, cur) => `<div class="upd-ver"><span class="muted">${label}</span><b>${esc(cur || "—")}</b>${icon("arrowR")}<b class="new">${esc(u.latest)}</b></div>`;
+  const cmd = u.docker ? "git pull && docker compose up -d --build" : "git pull && .venv/bin/pip install -r requirements.txt";
+  const page = u.page || `${REPO}/releases/latest`;
+  let html = `
+    <div class="upd-head"><span class="upd-ico">${icon("update")}</span><div>
+      <div class="name">Вышла TG Panel ${esc(u.latest)}</div>
+      <div class="muted small">${date ? `Выпущена ${esc(date)}` : "Новая версия на GitHub"}</div>
+    </div></div>
+    <div class="upd-vers">
+      ${t.server ? ver("Панель на сервере", u.current) : ""}
+      ${t.app ? ver(app.mode === "local" ? "Программа" : "Программа на компьютере", app.mode === "local" ? u.current : app.version) : ""}
+    </div>`;
+  if (u.notes) html += `<div class="section-title">Что нового</div><div class="upd-notes">${releaseNotes(u.notes)}</div>`;
+  if (t.app) html += `<div class="section-title">Программа</div>` + (app.update
+    ? `<p class="support-text">Программа скачает версию для вашей системы и перезапустится — аккаунты переподключатся сами.</p>
+       <button id="upd-app" class="btn primary block">${icon("download")} Обновить программу</button>`
+    : `<p class="support-text">Программа обновится сама в течение 6 часов. Сразу — значок TG Panel в трее → «Проверить обновления».</p>`);
+  if (t.server) html += `<div class="section-title">Панель на сервере</div>
+    <p class="support-text">Выполните в папке панели на сервере${u.docker ? " (там, где <code>docker-compose.yml</code>)" : ", затем перезапустите панель"} — аккаунты, папки и настройки сохранятся:</p>
+    <div class="upd-cmd"><code>${esc(cmd)}</code><button class="icon-btn sm" data-copy="${esc(cmd)}" title="Скопировать">${icon("copy")}</button></div>
+    <p class="muted small">После обновления сервера страница панели подхватит новую версию после перезагрузки (F5) — на всех устройствах сразу.</p>`;
+  html += `<div class="section-title">GitHub</div>
+    <a class="btn block" href="${esc(page)}" target="_blank" rel="noopener noreferrer" data-external>${icon("external")} Скачать с GitHub</a>
+    <p class="muted small upd-hint">Описание выпуска и файлы программы для Windows, Linux и macOS</p>
+    <div class="upd-foot"><button id="upd-hide" class="btn sm">Не напоминать об этой версии</button></div>`;
+  modal("Обновление", html, body => {
+    body.querySelector("#upd-app")?.addEventListener("click", () => {
+      closeModal();
+      toast("Программа проверяет обновление — дальше она спросит сама");
+      location.href = "tg-desktop/update";   // переход ловит программа (desktop/shell.py) и остаётся на странице
+    });
+    body.querySelector("[data-copy]")?.addEventListener("click", async e => {
+      const ok = await copyText(e.currentTarget.dataset.copy);
+      toast(ok ? "Команда скопирована" : "Не удалось скопировать — выделите команду вручную", !ok);
+    });
+    body.querySelector("#upd-hide").onclick = () => {
+      writePref("update_hidden", u.latest);
+      renderUpdateBadge(); closeModal();
+      toast("Значок скрыт до следующей версии — проверить можно в «Поддержке»");
+    };
+  });
+}
 
 // ---------- невидимка и тема ----------
 function renderGhost() {
@@ -1861,6 +2564,8 @@ async function start() {
   if (!started) {
     started = true;
     connectWS();
+    checkUpdate();
+    setInterval(checkUpdate, 3600e3);   // сервер спрашивает GitHub раз в 6 часов, здесь — его кэш
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
   }
 }

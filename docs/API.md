@@ -21,6 +21,7 @@
 | POST | `/api/logout` | — | `{ok}` |
 | GET | `/api/session` | — | `{ok, auth, version, hub_url}` — `auth: false`, если пароль отключён; `hub_url` — ссылка «Все панели» или пустая строка |
 | GET | `/api/health` | — | Без входа. `{status: "ok" \| "degraded", version, accounts, online, errors}` — `degraded`, если есть аккаунты с ошибкой |
+| GET | `/api/update?force=` | — | Последний релиз на GitHub: `{current, latest, available, notes, page, published_at, docker, enabled, checked_at, error}`. `available` — релиз новее этой панели; `notes` — описание релиза (Markdown); `docker` — панель в контейнере. Ответ GitHub кэшируется на 6 часов (после ошибки — 15 минут); `force=1` — спросить заново (не чаще раза в минуту). При `UPDATE_CHECK=0` — только `{current, enabled: false, available: false, docker}` |
 
 Если задан `WEB_PREFIX` (например, `/accounts`), все пути — с ним: `/accounts/api/session`, `/accounts/ws`.
 Без префикса панель тоже отвечает (для проверок на самом сервере).
@@ -116,9 +117,28 @@ sender_name, reply_to, media, action, views, pinned`.
 - `entities` — форматирование текста: `{type, offset, length, url?, language?, user_id?}`, где `type` —
   `bold|italic|underline|strike|code|pre|spoiler|quote|link|url|email|phone|mention|mention_name|hashtag|command`.
   Смещения в UTF-16 (совпадают с индексами строк JavaScript).
-- `buttons` — inline-кнопки: массив рядов, кнопка `{text, kind, url?, copy?}`, где `kind` —
+- `buttons` — inline-кнопки: массив рядов, кнопка `{text, kind, url?, copy?, style?}`, где `style` — цвет,
+  заданный ботом (`primary` синяя, `success` зелёная, `danger` красная), а `kind` —
   `url|webview|callback|password|game|switch|copy|profile|buy|disabled|other`. `null`, если кнопок нет.
   Нажатие `webview` через `/click` возвращает `webapp: {bot, mode, url}` — его передают в `/webapp`.
+
+## Оформленные посты
+
+Только для администраторов канала или группы. Пост без кнопок публикует сам аккаунт; с кнопками — бот канала
+(у обычного аккаунта Telegram inline-кнопки отбрасывает).
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/accounts/{aid}/chats/{cid}/post` | `{bot: {id, username, admin} \| null, buttons_supported, can_promote}` — бот для кнопок и может ли аккаунт назначать админов |
+| POST | `/api/accounts/{aid}/chats/{cid}/post/bot` | `{token}` — подключить бота (токен от @BotFather). Если бот не админ и у аккаунта есть право — назначает его с правом публикации. Пустой `token` — повторить с сохранённым. Ответ как у GET |
+| DELETE | `/api/accounts/{aid}/chats/{cid}/post/bot` | Забыть бота канала |
+| POST | `/api/accounts/{aid}/chats/{cid}/post` | multipart: `data` (JSON, ниже) и необязательный `file` → объект сообщения или `{scheduled: true}` |
+
+`data`: `{text, entities, buttons, silent?, no_preview?, invert?, spoiler?, schedule?}`.
+- `entities` — как в объекте сообщения: `bold|italic|underline|strike|code|pre|spoiler|quote|link` (`url` у `link`).
+- `buttons` — ряды кнопок `{text, url | copy, style?}`, `style` — `primary|success|danger`; до 8 в ряду, до 100 всего.
+- `invert` — текст над медиа (или превью ссылки над текстом), `spoiler` — медиа под спойлером,
+  `schedule` — unix-время публикации (только без кнопок: боты не умеют отложенную отправку).
 
 ## WebSocket `/ws`
 

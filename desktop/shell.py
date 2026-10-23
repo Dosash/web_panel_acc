@@ -1,5 +1,6 @@
 """Окно приложения: встроенный браузер Qt WebEngine с интерфейсом панели, значок в трее, уведомления,
 сохранение файлов, ссылки во внешнем браузере, автозапуск, подключение к серверу, обновления."""
+import json
 import logging
 import os
 import shutil
@@ -24,13 +25,18 @@ from paths import APP_NAME, resource
 log = logging.getLogger("desktop")
 
 ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+UPDATE_PATH = "/tg-desktop/update"
 
 # Встраивается в страницу панели. Браузер шлёт уведомление, только когда вкладка скрыта; у приложения
 # «скрыто» — это ещё и окно не в фокусе. Выход из панели в локальном режиме не нужен: вход выполняет
 # само приложение (на своём сервере пароль вводится как обычно, и кнопка выхода остаётся).
+# TG_DESKTOP_APP — версия и режим программы для значка «Вышло обновление»: кнопка «Обновить программу»
+# переходит на адрес панели …/UPDATE_PATH, переход ловит Page.acceptNavigationRequest (свою схему
+# вроде tg-panel:// WebEngine до acceptNavigationRequest не доводит).
 PAGE_SCRIPT = """
 (() => {
   window.TG_DESKTOP = true;
+  window.TG_DESKTOP_APP = APP_INFO;
   const real = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -91,6 +97,10 @@ class Page(QWebEnginePage):
         self.fullScreenRequested.connect(self.on_fullscreen)
 
     def acceptNavigationRequest(self, url: QUrl, kind, is_main_frame: bool) -> bool:
+        if is_main_frame and self.shell.is_panel_url(url) and url.path().endswith(UPDATE_PATH):
+            # «Обновить программу» в окне обновления панели
+            QTimer.singleShot(0, lambda: self.shell.check_updates(manual=True))
+            return False
         # во фреймах (мини-приложения ботов) переходы свои — не трогаем
         if not is_main_frame or url.scheme() in ("data", "about", "blob") or self.shell.is_panel_url(url):
             return True
@@ -216,7 +226,8 @@ class ShellWindow(QMainWindow):
         script = QWebEngineScript()
         script.setName("tg-desktop")
         hide_logout = "true" if mode == LOCAL else "false"
-        script.setSourceCode(PAGE_SCRIPT.replace("HIDE_LOGOUT", hide_logout))
+        app_info = json.dumps({"version": version, "mode": mode, "update": True})
+        script.setSourceCode(PAGE_SCRIPT.replace("HIDE_LOGOUT", hide_logout).replace("APP_INFO", app_info))
         script.setInjectionPoint(QWebEngineScript.DocumentCreation)
         script.setWorldId(QWebEngineScript.MainWorld)
         script.setRunsOnSubFrames(False)

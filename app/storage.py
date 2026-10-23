@@ -74,6 +74,17 @@ def init_db() -> None:
                 added_at REAL NOT NULL,
                 PRIMARY KEY (folder_id, account_id, chat_id)
             )""")
+        # Бот, который публикует посты с кнопками в канал (у обычного аккаунта кнопки не работают)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS post_bots (
+                account_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                bot_id INTEGER NOT NULL,
+                username TEXT NOT NULL DEFAULT '',
+                token_enc BLOB NOT NULL,
+                session_enc BLOB,
+                PRIMARY KEY (account_id, chat_id)
+            )""")
 
 
 def _row(r: sqlite3.Row) -> Account:
@@ -136,6 +147,7 @@ def delete_account(account_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         c.execute("DELETE FROM folder_items WHERE account_id = ?", (account_id,))
+        c.execute("DELETE FROM post_bots WHERE account_id = ?", (account_id,))
 
 
 # ---------- папки ----------
@@ -190,3 +202,27 @@ def remove_folder_item(folder_id: int, account_id: int, chat_id: int) -> None:
     with _conn() as c:
         c.execute("DELETE FROM folder_items WHERE folder_id = ? AND account_id = ? AND chat_id = ?",
                   (folder_id, account_id, chat_id))
+
+
+# ---------- боты для постов ----------
+
+def get_post_bot(account_id: int, chat_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT * FROM post_bots WHERE account_id = ? AND chat_id = ?", (account_id, chat_id)).fetchone()
+    if not r:
+        return None
+    return {"bot_id": r["bot_id"], "username": r["username"], "token": _fernet.decrypt(r["token_enc"]).decode(),
+            "session": _fernet.decrypt(r["session_enc"]).decode() if r["session_enc"] else ""}
+
+
+def set_post_bot(account_id: int, chat_id: int, bot_id: int, username: str, token: str, session: str) -> None:
+    with _conn() as c:
+        c.execute("""INSERT OR REPLACE INTO post_bots (account_id, chat_id, bot_id, username, token_enc, session_enc)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  (account_id, chat_id, bot_id, username, _fernet.encrypt(token.encode()),
+                   _fernet.encrypt(session.encode()) if session else None))
+
+
+def delete_post_bot(account_id: int, chat_id: int) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM post_bots WHERE account_id = ? AND chat_id = ?", (account_id, chat_id))
