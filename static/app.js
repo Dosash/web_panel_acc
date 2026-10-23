@@ -2029,7 +2029,8 @@ function linkPreviewModal(aid, r) {
 // Приложение работает во фрейме и общается с панелью как с Telegram Web: postMessage({eventType, eventData})
 let WA = null;   // открытое приложение: {aid, opts, res, frame, root, timer, confirmClose}
 function cssColor(name) {
-  const ctx = (cssColor.ctx ||= document.createElement("canvas").getContext("2d"));
+  // без ||= : встроенный браузер Windows-программы (Qt 5.15.2, Chromium 83) его не знает, и app.js не запускается
+  const ctx = cssColor.ctx || (cssColor.ctx = document.createElement("canvas").getContext("2d"));
   ctx.fillStyle = "#000"; ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return ctx.fillStyle;   // браузер приводит цвет к #rrggbb
 }

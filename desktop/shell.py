@@ -112,8 +112,9 @@ class Page(QWebEnginePage):
         return PopupCatcher(self.profile(), self.shell, self)
 
     def javaScriptConsoleMessage(self, level, message, line, source):
+        # в журнал: ошибка в app.js (например, синтаксис, которого не знает встроенный Chromium) — пустое окно
         if level == QWebEnginePage.ErrorMessageLevel:
-            log.debug("js: %s (%s:%s)", message, source, line)
+            log.warning("js: %s (%s:%s)", message, source, line)
 
     def on_permission(self, origin: QUrl, feature) -> None:
         if feature == QWebEnginePage.Notifications:
