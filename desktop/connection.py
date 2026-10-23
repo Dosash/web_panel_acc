@@ -14,7 +14,7 @@ LOCAL, REMOTE = "local", "remote"
 
 
 def normalize_url(text: str) -> str:
-    """'192.168.3.18/accounts' → 'http://192.168.3.18/accounts/': адреса панели относительные,
+    """'192.168.1.10/accounts' → 'http://192.168.1.10/accounts/': адреса панели относительные,
     без слэша в конце api/... ушли бы мимо её пути."""
     url = text.strip()
     if url and "://" not in url:
@@ -58,7 +58,7 @@ class ConnectionDialog(QDialog):
         layout.addWidget(self._hint("Программа открывает вашу веб-панель: аккаунты, папки и любые изменения "
                                     "панели — одни и те же на всех устройствах."))
         self.url = QLineEdit(url)
-        self.url.setPlaceholderText("Адрес панели, например http://192.168.3.18/accounts/")
+        self.url.setPlaceholderText("Адрес панели, например http://192.168.1.10/accounts/")
         layout.addWidget(self.url)
         self.error = QLabel()
         self.error.setStyleSheet("color: #e5484d")
