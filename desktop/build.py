@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -169,9 +170,17 @@ def package_macos() -> None:
     (stage / "Applications").symlink_to("/Applications")
     out = RELEASE / f"TG-Panel-{VERSION}-macos-{ARCH}.dmg"
     step(f"Образ {out.name}")
-    out.unlink(missing_ok=True)
-    subprocess.run(["hdiutil", "create", "-volname", "TG Panel", "-srcfolder", str(stage), "-ov",
-                    "-format", "UDZO", str(out)], check=True)
+    # на раннерах GitHub hdiutil иногда падает с «Resource busy» (образ ещё проверяет XProtect) — повторяем
+    for attempt in range(1, 6):
+        out.unlink(missing_ok=True)
+        result = subprocess.run(["hdiutil", "create", "-volname", "TG Panel", "-srcfolder", str(stage), "-ov",
+                                 "-format", "UDZO", str(out)])
+        if result.returncode == 0:
+            break
+        if attempt == 5:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        print(f"hdiutil не удался, повтор {attempt + 1}/5 через {attempt * 5} с", flush=True)
+        time.sleep(attempt * 5)
 
 
 def main() -> None:
