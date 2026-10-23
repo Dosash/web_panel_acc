@@ -184,9 +184,15 @@ def launch_after_exit(commands: list[str], start: list[str] | None, work: Path) 
             lines.append(f"Start-Process -FilePath {_ps(start[0])}" + (f" -ArgumentList {rest}" if rest else ""))
         script = work / "update.ps1"
         script.write_text("\r\n".join(lines), encoding="utf-8-sig")
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(script)]
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                          "-File", str(script)], creationflags=flags, close_fds=True, env=clean_env())
+        try:
+            # программа работает в задании Windows (Job Object), которое при её выходе завершает и дочерние
+            # процессы — скрипт погибал, не начав работу. Выводим его из задания
+            subprocess.Popen(cmd, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True,
+                             env=clean_env())
+        except OSError:  # задание запрещает выход из него
+            subprocess.Popen(cmd, creationflags=flags, close_fds=True, env=clean_env())
     else:
         lines = [f"while kill -0 {pid} 2>/dev/null; do sleep 0.5; done", "set -e", *commands, "set +e"]
         if start:
