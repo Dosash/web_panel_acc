@@ -181,6 +181,10 @@ def buttons_list(msg) -> list[list[dict]] | None:
                 item["copy"] = t.copy_text
             if isinstance(t, types.InlineButtonTypeCallback) and t.requires_password:
                 item["kind"] = "password"
+            style = getattr(b, "style", None)   # цвет кнопки, который задал бот
+            if style is not None:
+                item["style"] = ("primary" if style.bg_primary else "success" if style.bg_success
+                                 else "danger" if style.bg_danger else None)
             out.append(item)
         rows.append(out)
     return rows or None

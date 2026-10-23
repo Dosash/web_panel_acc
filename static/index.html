@@ -88,6 +88,7 @@
           <button id="bot-app" class="bot-app" type="button" hidden title="Мини-приложение бота"><span data-icon="grid"></span><span class="t"></span></button>
           <label class="icon-btn" title="Прикрепить файл"><span data-icon="clip"></span><input id="file-input" type="file" multiple hidden></label>
           <textarea id="composer-text" rows="1" placeholder="Сообщение"></textarea>
+          <button id="post-btn" class="icon-btn post-btn" type="button" hidden title="Оформить пост: текст, медиа, цветные кнопки"><span data-icon="sparkles"></span></button>
           <button class="send" type="submit" title="Отправить (Enter)"><span data-icon="send"></span></button>
         </form>
         <div id="readonly-bar" class="readonly-bar" hidden><span data-icon="lock"></span> Только чтение — вы не администратор канала</div>
@@ -101,6 +102,7 @@
       <div id="modal-body"></div>
     </div>
   </div>
+  <button id="update-badge" class="update-badge" hidden aria-label="Вышло обновление"><span data-icon="update"></span><span class="t"></span></button>
   <div id="toast" class="toast" hidden></div>
 
   <script src="app.js"></script>

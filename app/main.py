@@ -6,6 +6,7 @@ import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -17,7 +18,7 @@ from pydantic import BaseModel
 from telethon import functions, types
 from telethon.errors import BotResponseTimeoutError, RPCError
 
-from . import storage
+from . import poster, storage, updates
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, HUB_URL, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
 from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type, username
 from .tdata_import import ImportError_, convert, save_upload
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(manager.start_all())
     yield
     task.cancel()
+    await poster.close_all()
     await manager.stop_all()
 
 
@@ -102,6 +104,14 @@ RPC_MESSAGES = {
     "BOT_APP_INVALID": "У бота нет такого мини-приложения",
     "BOT_INVALID": "Это не бот или у него нет мини-приложения",
     "QUERY_ID_INVALID": "Сеанс мини-приложения истёк — откройте его заново",
+    "MESSAGE_TOO_LONG": "Текст длиннее 4096 символов",
+    "MEDIA_CAPTION_TOO_LONG": "Подпись к медиа слишком длинная: до 1024 символов (с Premium — до 4096)",
+    "BUTTON_URL_INVALID": "Telegram не принял ссылку в одной из кнопок",
+    "ENTITY_BOUNDS_INVALID": "Форматирование выходит за границы текста — попробуйте убрать его и задать заново",
+    "SCHEDULE_DATE_TOO_LATE": "Отложить можно не дальше чем на год",
+    "SCHEDULE_TOO_MUCH": "В канале слишком много отложенных постов",
+    "CHAT_WRITE_FORBIDDEN": "Нет права публиковать в этот чат",
+    "ACCESS_TOKEN_INVALID": "Токен бота недействителен — возьмите актуальный у @BotFather",
 }
 
 
@@ -179,6 +189,12 @@ async def health():
     errors = states.count("error")
     return {"status": "degraded" if errors else "ok", "version": VERSION,
             "accounts": len(storage.list_accounts()), "online": states.count("online"), "errors": errors}
+
+
+@app.get("/api/update", dependencies=[Depends(auth)])
+async def update_status(force: bool = False):
+    """Последний релиз на GitHub и новее ли он этой панели (ответ GitHub кэшируется на 6 часов)."""
+    return await updates.status(force)
 
 
 # ---------- аккаунты ----------
@@ -729,6 +745,133 @@ async def send_file(aid: int, cid: int, file: UploadFile = File(...), caption: s
                                      reply_to=reply_to, force_document=as_document)
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
+    return message_dict(aid, msg)
+
+
+# ---------- красивые посты ----------
+
+async def _post_target(aid: int, cid: int):
+    entity = await _full_entity(aid, cid)
+    if isinstance(entity, types.User) or not (getattr(entity, "creator", False) or getattr(entity, "admin_rights", None)):
+        raise HTTPException(403, "Оформленные посты доступны администраторам каналов и групп")
+    return entity
+
+
+async def _bot_state(aid: int, entity, saved: dict | None) -> dict | None:
+    if not saved:
+        return None
+    state = {"id": saved["bot_id"], "username": saved["username"], "admin": None}
+    if isinstance(entity, types.Channel):
+        try:
+            bot = await manager.client(aid).get_input_entity(saved["username"] or saved["bot_id"])
+            state["admin"] = await poster.bot_admin(manager.client(aid), entity, bot)
+        except (ValueError, RPCError):
+            state["admin"] = False
+    return state
+
+
+@app.get("/api/accounts/{aid}/chats/{cid}/post", dependencies=A)
+async def post_info(aid: int, cid: int):
+    entity = await _post_target(aid, cid)
+    return {"bot": await _bot_state(aid, entity, storage.get_post_bot(aid, cid)),
+            "buttons_supported": isinstance(entity, types.Channel),
+            "can_promote": bool(my_rights(entity).get("add_admins"))}
+
+
+class PostBotIn(BaseModel):
+    token: str
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/post/bot", dependencies=A)
+async def set_post_bot(aid: int, cid: int, body: PostBotIn):
+    """Подключить бота к каналу: проверить токен и, если можем, сразу назначить его администратором."""
+    entity = await _post_target(aid, cid)
+    if not isinstance(entity, types.Channel):
+        raise HTTPException(400, "Кнопки под постами работают только в каналах и супергруппах")
+    token = body.token.strip()
+    if not token and storage.get_post_bot(aid, cid):   # пустой токен — повторить с сохранённым (назначить админом)
+        token = storage.get_post_bot(aid, cid)["token"]
+    if not poster.TOKEN_RE.match(token):
+        raise HTTPException(400, "Это не похоже на токен бота. Он выглядит так: 123456789:AAH…, его выдаёт @BotFather")
+    account = manager.get(aid).account
+    bot = await poster.bot_client(token, "", account.api, parse_proxy(account.proxy))
+    me = await bot.get_me()
+    storage.set_post_bot(aid, cid, me.id, me.username or "", token, bot.session.save())
+    client = manager.client(aid)
+    bot_peer = await client.get_input_entity(me.username)
+    if not await poster.bot_admin(client, entity, bot_peer):
+        if not my_rights(entity).get("add_admins"):
+            raise HTTPException(400, f"Бот @{me.username} подключён, но не администратор. У аккаунта нет права "
+                                     "назначать админов — добавьте бота с правом публикации вручную")
+        await poster.promote_bot(client, entity, bot_peer)
+    return await post_info(aid, cid)
+
+
+@app.delete("/api/accounts/{aid}/chats/{cid}/post/bot", dependencies=A)
+async def delete_post_bot(aid: int, cid: int):
+    saved = storage.get_post_bot(aid, cid)
+    storage.delete_post_bot(aid, cid)
+    if saved:   # если тот же бот подключён к другому каналу, он переподключится там по своей сессии
+        await poster.drop_bot(saved["token"])
+    return {"ok": True}
+
+
+class PostIn(BaseModel):
+    text: str = ""
+    entities: list[dict] = []
+    buttons: list[list[dict]] = []
+    silent: bool = False
+    no_preview: bool = False
+    invert: bool = False         # текст над медиа / над превью ссылки
+    spoiler: bool = False        # фото или видео под спойлером
+    schedule: float | None = None
+
+
+@app.post("/api/accounts/{aid}/chats/{cid}/post", dependencies=A)
+async def send_post(aid: int, cid: int, data: str = Form(...), file: UploadFile | None = File(None)):
+    """Пост с форматированием, медиа и цветными кнопками. С кнопками публикует бот канала, без — сам аккаунт."""
+    body = PostIn.model_validate_json(data)
+    entity = await _post_target(aid, cid)
+    text = body.text.strip()
+    if not text and file is None:
+        raise HTTPException(400, "Пост пустой: добавьте текст или медиа")
+    if len(text.encode("utf-16-le")) // 2 > poster.TEXT_LIMIT:
+        raise HTTPException(400, f"Текст длиннее {poster.TEXT_LIMIT} символов")
+    ents = poster.entities(body.entities)
+    reply_markup = poster.markup(body.buttons)
+    schedule = None
+    if body.schedule:
+        if body.schedule < time.time() + 30:
+            raise HTTPException(400, "Время публикации уже прошло")
+        schedule = datetime.fromtimestamp(body.schedule, timezone.utc)
+    client = manager.client(aid)
+    sender, peer = client, await manager.entity(aid, cid)
+    if reply_markup is not None:
+        saved = storage.get_post_bot(aid, cid)
+        if not saved:
+            raise HTTPException(400, "Кнопки публикует бот канала — подключите его в разделе «Кнопки»")
+        if schedule:
+            raise HTTPException(400, "Пост с кнопками нельзя отложить: его публикует бот, а боты не умеют отложенную отправку")
+        if file is not None and len(text.encode("utf-16-le")) // 2 > poster.CAPTION_LIMIT:
+            raise HTTPException(400, f"Подпись к медиа у поста с кнопками — до {poster.CAPTION_LIMIT} символов")
+        account = manager.get(aid).account
+        sender = await poster.bot_client(saved["token"], saved["session"], account.api, parse_proxy(account.proxy))
+        try:
+            peer = await sender.get_input_entity(cid)
+        except (ValueError, RPCError):
+            raise HTTPException(400, f"Бот @{saved['username']} не видит канал — проверьте, что он администратор")
+    path = await _save_upload_tmp(file) if file is not None else None
+    try:
+        msg = await poster.send(sender, peer, text, ents, path=path, reply_markup=reply_markup, silent=body.silent,
+                                no_preview=body.no_preview, invert=body.invert, spoiler=body.spoiler, schedule=schedule)
+    finally:
+        if path:
+            shutil.rmtree(path.parent, ignore_errors=True)
+    if schedule:
+        return {"scheduled": True}
+    if sender is not client:
+        # пост бота перечитываем глазами аккаунта: так он выглядит в ленте одинаково с остальными
+        msg = await client.get_messages(entity, ids=msg.id) or msg
     return message_dict(aid, msg)
 
 
