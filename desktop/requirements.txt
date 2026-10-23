@@ -3,6 +3,8 @@
 -r ../requirements.txt
 
 PyQtWebEngine==5.15.7
+# корневые сертификаты для проверки обновлений (у Python в сборке под macOS своих нет)
+certifi==2026.10.19
 # Qt для PyQt5 и QtWebEngine должен быть одной версии. Под Windows колёса Qt есть только 5.15.2
 PyQt5-Qt5==5.15.2 ; sys_platform == "win32"
 PyQtWebEngine-Qt5==5.15.2 ; sys_platform == "win32"

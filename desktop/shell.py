@@ -1,5 +1,5 @@
 """Окно приложения: встроенный браузер Qt WebEngine с интерфейсом панели, значок в трее, уведомления,
-сохранение файлов, ссылки во внешнем браузере, автозапуск."""
+сохранение файлов, ссылки во внешнем браузере, автозапуск, подключение к серверу, обновления."""
 import logging
 import os
 import shutil
@@ -17,6 +17,8 @@ from PyQt5.QtWebEngineWidgets import (QWebEngineDownloadItem, QWebEnginePage, QW
                                       QWebEngineSettings, QWebEngineView)
 
 import autostart
+import updater
+from connection import LOCAL, REMOTE, ConnectionDialog
 from paths import APP_NAME, resource
 
 log = logging.getLogger("desktop")
@@ -24,7 +26,8 @@ log = logging.getLogger("desktop")
 ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
 
 # Встраивается в страницу панели. Браузер шлёт уведомление, только когда вкладка скрыта; у приложения
-# «скрыто» — это ещё и окно не в фокусе. Выход из панели не нужен: вход выполняет само приложение.
+# «скрыто» — это ещё и окно не в фокусе. Выход из панели в локальном режиме не нужен: вход выполняет
+# само приложение (на своём сервере пароль вводится как обычно, и кнопка выхода остаётся).
 PAGE_SCRIPT = """
 (() => {
   window.TG_DESKTOP = true;
@@ -33,6 +36,7 @@ PAGE_SCRIPT = """
     configurable: true,
     get() { return window.__tgDesktopActive === false ? "hidden" : real.get.call(document); },
   });
+  if (!HIDE_LOGOUT) return;
   const style = () => {
     const s = document.createElement("style");
     s.textContent = "#logout { display: none !important; }";
@@ -185,13 +189,19 @@ class ViewerWindow(QMainWindow):
 
 
 class ShellWindow(QMainWindow):
-    def __init__(self, settings: QSettings, data_dir: Path, start_hidden: bool = False):
+    def __init__(self, settings: QSettings, data_dir: Path, mode: str, version: str, start_hidden: bool = False):
         super().__init__()
         self.settings = settings
         self.data_dir = data_dir
+        self.mode = mode
+        self.version = version
         self.base_url: QUrl | None = None
         self.quitting = False
         self.viewers: list[ViewerWindow] = []
+        self.restart_args: list[str] | None = None  # перезапуск после выхода (смена подключения)
+        self.updater = updater.Updater(version, data_dir / "update")
+        self.pending_update: updater.Installer | None = None
+        self.update_actions: list[QAction] = []  # пункт в трее и в строке меню
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self.setMinimumSize(380, 480)
@@ -205,7 +215,8 @@ class ShellWindow(QMainWindow):
         self.profile.downloadRequested.connect(self.on_download)
         script = QWebEngineScript()
         script.setName("tg-desktop")
-        script.setSourceCode(PAGE_SCRIPT)
+        hide_logout = "true" if mode == LOCAL else "false"
+        script.setSourceCode(PAGE_SCRIPT.replace("HIDE_LOGOUT", hide_logout))
         script.setInjectionPoint(QWebEngineScript.DocumentCreation)
         script.setWorldId(QWebEngineScript.MainWorld)
         script.setRunsOnSubFrames(False)
@@ -220,6 +231,7 @@ class ShellWindow(QMainWindow):
         self.page = Page(self.profile, self, self.view)
         self.page.setBackgroundColor(Qt.transparent)
         self.page.renderProcessTerminated.connect(self.on_render_crash)
+        self.page.loadFinished.connect(self.on_load_finished)
         self.view.setPage(self.page)
         self.view.setZoomFactor(float(settings.value("zoom", 1.0)))
         self.setCentralWidget(self.view)
@@ -228,6 +240,7 @@ class ShellWindow(QMainWindow):
         self.tray = self.make_tray()
         self.make_shortcuts()
         self.restore_geometry()
+        self.setup_updates()
         if not (start_hidden and self.tray):
             self.show()
 
@@ -273,6 +286,14 @@ class ShellWindow(QMainWindow):
     def quit(self) -> None:
         self.quitting = True
         self.settings.setValue("geometry", self.saveGeometry())
+        try:
+            if self.pending_update:
+                # обновление, отложенное «до выхода»: ставится после закрытия, программа не запускается
+                self.pending_update.launch(relaunch=self.restart_args is not None, args=self.restart_args or [])
+            elif self.restart_args is not None:
+                updater.restart(self.restart_args, self.data_dir / "update")
+        except OSError as e:
+            log.error("Не удалось запустить скрипт после выхода: %s", e)
         for v in list(self.viewers):
             v.close()
         if self.tray:
@@ -342,12 +363,31 @@ class ShellWindow(QMainWindow):
         # даём хранилищу cookie применить запись до первого запроса страницы
         QTimer.singleShot(50, lambda: self.view.load(self.base_url))
 
+    def load_remote(self, url: str) -> None:
+        """Режим «на моём сервере»: интерфейс и аккаунты — с сервера, вход по паролю панели (если он задан)."""
+        self.base_url = QUrl(url)
+        self.view.load(self.base_url)
+
+    def on_load_finished(self, ok: bool) -> None:
+        # сервер недоступен (выключен, нет сети) — свой экран и повтор, а не страница ошибки Chromium
+        if ok or self.mode != REMOTE or self.quitting or not self.base_url:
+            return
+        if not self.is_panel_url(self.page.requestedUrl()):
+            return
+        url = self.base_url.toString()
+        self.page.setHtml(status_html("Сервер панели недоступен",
+                                      f"{url}\nПовторяем подключение каждые 10 секунд…\n\n"
+                                      "Сменить адрес — значок в трее → «Подключение…»"))
+        QTimer.singleShot(10_000, lambda: self.view.load(self.base_url) if not self.quitting else None)
+
     def show_error(self, title: str, text: str) -> None:
         self.page.setHtml(status_html(title, text, spinner=False))
         self.show_window()
 
     def is_panel_url(self, url: QUrl) -> bool:
-        return bool(self.base_url) and same_origin(url, self.base_url)
+        # на сервере за общим nginx рядом другие панели: своя — только под путём панели
+        return (bool(self.base_url) and same_origin(url, self.base_url)
+                and url.path().startswith(self.base_url.path() or "/"))
 
     def open_url(self, url: QUrl, popup: bool = False) -> None:
         """Файлы панели — в отдельном окне приложения, всё остальное — в системном браузере
@@ -412,14 +452,17 @@ class ShellWindow(QMainWindow):
 
     # ---------- трей ----------
 
-    def make_tray(self) -> QSystemTrayIcon | None:
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            return None
-        tray = QSystemTrayIcon(self.windowIcon(), self)
-        tray.setToolTip(APP_NAME)
-        menu = QMenu()
+    def build_menu(self, menu: QMenu) -> QMenu:
         menu.addAction("Открыть TG Panel", self.show_window)
+        where = "на этом компьютере" if self.mode == LOCAL else self.base_url_text()
+        menu.addAction(f"Подключение: {where}…", self.change_connection)
         menu.addAction("Папка с данными", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir))))
+        menu.addSeparator()
+        self.update_actions.append(menu.addAction("Проверить обновления", lambda: self.check_updates(manual=True)))
+        auto = QAction("Обновлять автоматически", menu, checkable=True)
+        auto.setChecked(self.auto_update)
+        auto.toggled.connect(lambda on: self.settings.setValue("auto_update", on))
+        menu.addAction(auto)
         if autostart.supported():
             act = QAction("Запускать при входе в систему", menu, checkable=True)
             act.setChecked(autostart.enabled())
@@ -427,6 +470,17 @@ class ShellWindow(QMainWindow):
             menu.addAction(act)
         menu.addSeparator()
         menu.addAction("Выход", self.quit)
+        return menu
+
+    def make_tray(self) -> QSystemTrayIcon | None:
+        if sys.platform == "darwin" or not QSystemTrayIcon.isSystemTrayAvailable():
+            # строка меню: в macOS она своя у каждой программы, а без трея иначе не до чего добраться
+            self.build_menu(self.menuBar().addMenu(APP_NAME))
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return None
+        tray = QSystemTrayIcon(self.windowIcon(), self)
+        tray.setToolTip(f"{APP_NAME} {self.version}")
+        menu = self.build_menu(QMenu())
         tray.setContextMenu(menu)
         self._tray_menu = menu
         tray.activated.connect(lambda reason: self.toggle_window() if reason in (
@@ -440,3 +494,104 @@ class ShellWindow(QMainWindow):
             autostart.set_enabled(on)
         except OSError as e:
             QMessageBox.warning(self, APP_NAME, f"Не удалось изменить автозапуск: {e}")
+
+    # ---------- подключение ----------
+
+    def base_url_text(self) -> str:
+        return str(self.settings.value("server_url", "") or "сервер")
+
+    def change_connection(self) -> None:
+        dialog = ConnectionDialog(self.mode, str(self.settings.value("server_url", "") or ""), self)
+        if dialog.exec_() != ConnectionDialog.Accepted:
+            return
+        mode, url = dialog.result_value()
+        if (mode, url) == (self.mode, str(self.settings.value("server_url", "") or "") if mode == REMOTE else ""):
+            return
+        if mode == LOCAL and self.mode == REMOTE and QMessageBox.question(
+                self, APP_NAME, "Аккаунты будут подключаться из этой программы. Не используйте одни и те же "
+                "сессии одновременно здесь и на сервере — Telegram может их сбросить. Продолжить?") != QMessageBox.Yes:
+            return
+        self.settings.setValue("mode", mode)
+        if url:
+            self.settings.setValue("server_url", url)
+        self.settings.sync()
+        self.restart_args = []
+        self.quit()
+
+    # ---------- обновления ----------
+
+    @property
+    def auto_update(self) -> bool:
+        return self.settings.value("auto_update", True, type=bool)
+
+    def setup_updates(self) -> None:
+        u = self.updater
+        u.found.connect(self.on_update_found)
+        u.ready.connect(self.on_update_ready)
+        u.up_to_date.connect(self.on_up_to_date)
+        u.failed.connect(self.on_update_failed)
+        self._manual_check = False
+        # первая проверка — когда программа уже загрузилась, потом раз в 6 часов
+        QTimer.singleShot(30_000, lambda: self.check_updates(manual=False))
+        self._update_timer = QTimer(self)
+        self._update_timer.timeout.connect(lambda: self.check_updates(manual=False))
+        self._update_timer.start(6 * 3600 * 1000)
+
+    def check_updates(self, manual: bool) -> None:
+        if self.pending_update:
+            if manual:
+                self.ask_install(self.pending_update)
+            return
+        if not manual and not self.auto_update:
+            return
+        self._manual_check = manual
+        self.updater.check(download=True)
+
+    def on_up_to_date(self, latest: str) -> None:
+        if self._manual_check:
+            QMessageBox.information(self, APP_NAME, f"У вас последняя версия: {self.version}.")
+
+    def on_update_failed(self, error: str) -> None:
+        if self._manual_check:
+            QMessageBox.warning(self, APP_NAME, f"Не удалось проверить обновления:\n{error}")
+
+    def on_update_found(self, rel: updater.Release) -> None:
+        for action in self.update_actions:
+            action.setText(f"Обновить до {rel.version}")
+        if self.updater.can_install(rel):
+            if self._manual_check:
+                self.notify(APP_NAME, f"Скачиваем TG Panel {rel.version}…")
+            return  # дальше — on_update_ready, когда файл скачается
+        # из исходников, без файла под эту систему или без прав на папку программы — только ссылка
+        if self._manual_check or self.settings.value("notified_version") != rel.version:
+            self.settings.setValue("notified_version", rel.version)
+            if QMessageBox.question(self, APP_NAME, f"Доступна TG Panel {rel.version} (у вас {self.version}).\n"
+                                    "Открыть страницу загрузки?") == QMessageBox.Yes:
+                QDesktopServices.openUrl(QUrl(rel.page))
+
+    def on_update_ready(self, installer: updater.Installer) -> None:
+        self.pending_update = installer
+        for action in self.update_actions:
+            action.setText(f"Установить {installer.version} и перезапустить")
+        if not self.isVisible() and not self._manual_check:
+            # программа в трее — обновляемся сразу и тихо возвращаемся в трей
+            log.info("Обновление %s: окно скрыто — устанавливаем сразу", installer.version)
+            self.install_update(hidden=True)
+            return
+        self.ask_install(installer)
+
+    def ask_install(self, installer: updater.Installer) -> None:
+        box = QMessageBox(QMessageBox.Information, APP_NAME,
+                          f"Обновление TG Panel {installer.version} скачано (у вас {self.version}).", parent=self)
+        box.setInformativeText("Программа перезапустится, аккаунты переподключатся сами.")
+        now = box.addButton("Перезапустить сейчас", QMessageBox.AcceptRole)
+        box.addButton("При выходе", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is now:
+            self.install_update(hidden=False)
+        else:
+            self.notify(APP_NAME, f"Версия {installer.version} установится, когда вы выйдете из программы.")
+
+    def install_update(self, hidden: bool) -> None:
+        self.restart_args = ["--hidden"] if hidden else []
+        self.quit()

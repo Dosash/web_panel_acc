@@ -185,6 +185,7 @@ def main() -> None:
     RELEASE.mkdir(parents=True, exist_ok=True)
     step("Значки")
     make_icons()
+    (BUILD / "version.txt").write_text(VERSION, encoding="utf-8")  # версия для обновлений (paths.version)
     if sys.platform == "win32":
         windows_version_info()
     step("PyInstaller")

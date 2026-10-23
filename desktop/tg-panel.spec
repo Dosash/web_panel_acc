@@ -15,7 +15,8 @@ a = Analysis(
     [str(HERE / "launcher.py")],
     pathex=[str(ROOT), str(HERE)],
     # static/ рядом с app/: app.config берёт BASE_DIR как папку над app/ — в сборке это корень распаковки
-    datas=[(str(ROOT / "static"), "static"), (str(HERE / "icon.svg"), ".")],
+    datas=[(str(ROOT / "static"), "static"), (str(HERE / "icon.svg"), "."),
+           (str(HERE / "build" / "version.txt"), ".")],
     # uvicorn и Telethon подгружают модули по имени — анализ импортов их не видит
     hiddenimports=collect_submodules("uvicorn") + collect_submodules("app") + collect_submodules("telethon")
     + collect_submodules("opentele") + ["PyQt5.QtSvg", "PyQt5.QtNetwork"],

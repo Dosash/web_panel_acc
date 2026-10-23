@@ -1,7 +1,8 @@
 """TG Panel для Windows, Linux и macOS: сервер панели из app/ на 127.0.0.1 + окно со встроенным браузером.
 
 Запуск из исходников: python desktop/launcher.py [--hidden]
-Папка данных: см. paths.data_dir() или переменная TG_PANEL_DATA."""
+Папка данных: см. paths.data_dir() или переменная TG_PANEL_DATA.
+TG_PANEL_SERVER=http://сервер/accounts/ — при первом запуске сразу подключиться к своему серверу, без вопроса."""
 import hashlib
 import logging
 import logging.handlers
@@ -74,8 +75,9 @@ def main() -> int:
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     from PyQt5 import QtWebEngineWidgets  # noqa: F401 — до QApplication, иначе WebEngine не стартует
 
+    from connection import LOCAL, REMOTE, ConnectionDialog, normalize_url
     from server import PanelServer, free_port
-    from shell import ShellWindow
+    from shell import ShellWindow, app_icon
     from single import SingleInstance
 
     qt = QApplication(sys.argv[:1])
@@ -91,13 +93,33 @@ def main() -> int:
         return 0
 
     settings = QSettings(str(data / "desktop.ini"), QSettings.IniFormat)
-    port = free_port(int(settings.value("port", 0) or 0))
-    settings.setValue("port", port)
-    log.info("TG Panel desktop: данные %s, порт %s", data, port)
+    mode = settings.value("mode", "")
+    if mode not in (LOCAL, REMOTE):
+        preset = os.getenv("TG_PANEL_SERVER", "").strip()
+        if preset:
+            mode, url = REMOTE, normalize_url(preset)
+        else:
+            # первый запуск: где работают аккаунты
+            dialog = ConnectionDialog()
+            dialog.setWindowIcon(app_icon())
+            if dialog.exec_() != ConnectionDialog.Accepted:
+                return 0
+            mode, url = dialog.result_value()
+        settings.setValue("mode", mode)
+        if url:
+            settings.setValue("server_url", url)
 
-    server = PanelServer(port)
-    server.start()
-    window = ShellWindow(settings, data, start_hidden=start_hidden)
+    version = paths.version()
+    server = None
+    if mode == LOCAL:
+        port = free_port(int(settings.value("port", 0) or 0))
+        settings.setValue("port", port)
+        log.info("TG Panel desktop %s: данные %s, порт %s", version, data, port)
+        server = PanelServer(port)
+        server.start()
+    else:
+        log.info("TG Panel desktop %s: сервер %s", version, settings.value("server_url"))
+    window = ShellWindow(settings, data, mode, version, start_hidden=start_hidden)
     qt.setQuitOnLastWindowClosed(window.tray is None)
     instance.activated.connect(window.show_window)
     # macOS: щелчок по значку в доке, когда окно скрыто
@@ -114,7 +136,9 @@ def main() -> int:
     ticker.start(500)
 
     def wait_server():
-        if server.started:
+        if server is None:
+            window.load_remote(str(settings.value("server_url")))
+        elif server.started:
             window.load_panel(server.url, server.cookie)
         elif server.failed:
             window.show_error("Не удалось запустить панель",
@@ -124,8 +148,9 @@ def main() -> int:
 
     wait_server()
     code = qt.exec_()
-    log.info("Выход: отключаем аккаунты")
-    server.stop()
+    if server:
+        log.info("Выход: отключаем аккаунты")
+        server.stop()
     instance.close()
     return code
 

@@ -39,3 +39,29 @@ def executable() -> list[str]:
     if FROZEN:
         return [sys.executable]
     return [sys.executable, str(Path(__file__).resolve().parent / "launcher.py")]
+
+
+def version() -> str:
+    """Версия программы: в сборке — файл version.txt (build.py), из исходников — VERSION в app/config.py.
+    app.config не импортируем: он создаёт ключи в папке данных, а в режиме сервера они не нужны."""
+    import re
+    bundled = resource("version.txt")
+    if FROZEN and bundled.exists():
+        return bundled.read_text("utf-8").strip()
+    config = Path(__file__).resolve().parent.parent / "app" / "config.py"
+    return re.search(r'^VERSION = "([^"]+)"', config.read_text("utf-8"), re.M).group(1)
+
+
+def clean_env() -> dict[str, str]:
+    """Окружение для внешних программ (notify-send, скрипт обновления): без путей к библиотекам сборки —
+    PyInstaller под Linux подставляет свои в LD_LIBRARY_PATH, и системные программы с ними падают."""
+    env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        orig = env.pop(var + "_ORIG", None)
+        if orig is not None:
+            env[var] = orig
+        elif FROZEN:
+            env.pop(var, None)
+    for var in ("WEB_PASSWORD", "QTWEBENGINE_REMOTE_DEBUGGING"):  # новой копии свои
+        env.pop(var, None)
+    return env
