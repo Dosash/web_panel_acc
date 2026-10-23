@@ -185,10 +185,12 @@ def launch_after_exit(commands: list[str], start: list[str] | None, work: Path) 
         script = work / "update.ps1"
         script.write_text("\r\n".join(lines), encoding="utf-8-sig")
         cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(script)]
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        # не DETACHED_PROCESS: без консоли PowerShell 5.1 молча выходит с кодом 0, не выполнив скрипт.
+        # CREATE_NO_WINDOW — своя скрытая консоль, и процесс переживает выход программы
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         try:
-            # программа работает в задании Windows (Job Object), которое при её выходе завершает и дочерние
-            # процессы — скрипт погибал, не начав работу. Выводим его из задания
+            # программа работает в задании Windows (Job Object) — на случай, если оно завершает дочерние
+            # процессы вместе с программой, выводим скрипт из задания
             subprocess.Popen(cmd, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, close_fds=True,
                              env=clean_env())
         except OSError:  # задание запрещает выход из него
