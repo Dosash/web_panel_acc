@@ -221,12 +221,14 @@ class ShellWindow(QMainWindow):
         # пережить страницы окна, иначе WebEngine ругается при выходе
         self.profile = QWebEngineProfile("tg-panel", QApplication.instance())
         self.profile.setPersistentStoragePath(str(data_dir / "webengine"))
-        self.profile.setCachePath(str(data_dir / "webengine-cache"))
         # после обновления — без старого app.js из кэша: до 0.11.2 панель отдавала файлы без Cache-Control,
-        # и встроенный браузер показывал прежний интерфейс
+        # и встроенный браузер показывал прежний интерфейс. Папку удаляем до того, как профиль её откроет:
+        # clearHttpCache() в Qt 5.15.2 подвешивал первую загрузку страницы (режим сервера — пустое окно)
+        cache = data_dir / "webengine-cache"
         if settings.value("cache_version") != version:
-            self.profile.clearHttpCache()
+            shutil.rmtree(cache, ignore_errors=True)
             settings.setValue("cache_version", version)
+        self.profile.setCachePath(str(cache))
         self.profile.setNotificationPresenter(self.present_notification)
         self.profile.downloadRequested.connect(self.on_download)
         script = QWebEngineScript()
