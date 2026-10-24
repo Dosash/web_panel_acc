@@ -130,6 +130,11 @@ pub struct Args {
 
 pub fn run(args: Args) {
     let data = paths::data_dir();
+    // относительный TG_PANEL_DATA считается от папки запуска, а перезапуск и помощник обновления стартуют
+    // из папки программы — передаём им уже вычисленный абсолютный путь
+    if std::env::var_os("TG_PANEL_DATA").is_some_and(|v| !v.is_empty()) {
+        std::env::set_var("TG_PANEL_DATA", &data);
+    }
     let _ = std::fs::create_dir_all(&data);
     let log_path = logger::init(&data);
     log::info!("TG Panel {VERSION} для Windows (Tauri, WebView2 {}): данные {}",
