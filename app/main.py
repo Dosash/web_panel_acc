@@ -340,10 +340,10 @@ async def import_sessions(
     name, proxy = name.strip(), proxy.strip()
     uploaded = [(f.filename or "", await f.read()) for f in files]
     try:
-        bundles = pair_files(expand_zips(uploaded))
+        bundles, errors = pair_files(expand_zips(uploaded))
     except ImportError_ as e:
         raise HTTPException(400, str(e))
-    accounts, errors = [], []
+    accounts = []
     for i, b in enumerate(bundles, 1):
         acc_name = name if name and len(bundles) == 1 else f"{name} {i}" if name else b.meta.label or b.key
         acc_proxy = proxy or b.meta.proxy

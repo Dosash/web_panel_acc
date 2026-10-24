@@ -138,7 +138,8 @@ def looks_like_session(name: str, data: bytes) -> bool:
         return True
     if name.lower().endswith(".session"):
         return True
-    if len(data) < 500 and not name.lower().endswith((".json", ".txt")):
+    # строковая сессия в .txt или файле без расширения: одна строка base64; обычный текст не подходит
+    if len(data) < 500 and not name.lower().endswith(".json"):
         return re.fullmatch(rb"\s*[A-Za-z0-9_\-=]{300,}\s*", data) is not None
     return False
 
@@ -263,12 +264,14 @@ def _key(name: str) -> str:
     return _SUFFIX.sub("", stem).lower() or stem.lower()
 
 
-def pair_files(files: list[tuple[str, bytes]]) -> list[Bundle]:
+def pair_files(files: list[tuple[str, bytes]]) -> tuple[list[Bundle], list[dict]]:
     """Каждый файл сессии — отдельный аккаунт; .json подбирается по имени (123.json ↔ 123_telethon.session).
-    Две сессии одного аккаунта (Telethon и Pyrogram) считаются одной — берётся Telethon."""
+    Две сессии одного аккаунта (Telethon и Pyrogram) считаются одной — берётся Telethon.
+    Возвращает пары и ошибки по файлам ({file, error}); если не прочиталась ни одна сессия — ImportError_."""
     sessions: dict[str, SessionFile] = {}
     jsons: dict[str, Meta] = {}
-    errors: list[str] = []
+    bad_json: dict[str, str] = {}
+    errors: list[dict] = []
     for name, data in files:
         low = name.lower()
         try:
@@ -281,18 +284,26 @@ def pair_files(files: list[tuple[str, bytes]]) -> list[Bundle]:
                 if prev is None or ("telethon" in low and "telethon" not in prev.name.lower()):
                     sessions[key] = sess
         except ImportError_ as e:
-            errors.append(str(e))
+            errors.append({"file": name, "error": str(e)})
+            if low.endswith(".json"):
+                bad_json[_key(name)] = str(e)
     if not sessions:
         if errors:
-            raise ImportError_(errors[0])
+            raise ImportError_(errors[0]["error"] if len(errors) == 1
+                               else "; ".join(e["error"] for e in errors))
         raise ImportError_("Среди файлов нет сессии: нужен .session (Telethon или Pyrogram) или строковая сессия.")
     bundles = []
     for key, sess in sessions.items():
+        if key in bad_json:
+            # json к этой сессии есть, но не читается — входить с параметрами «по умолчанию» нельзя:
+            # для Telegram это выглядело бы как другое устройство
+            errors.append({"file": sess.name, "error": f"не подключён: {bad_json[key]}"})
+            continue
         meta = jsons.get(key)
         if meta is None and len(jsons) == 1 and len(sessions) == 1:
             meta = next(iter(jsons.values()))
         bundles.append(Bundle(sess, meta or Meta(), key))
-    return bundles
+    return bundles, errors
 
 
 # ---------- вход ----------

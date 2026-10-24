@@ -330,18 +330,50 @@ def test_pair_files_by_stem(tmp_path):
     files = [("100200300.json", b'{"first_name": "A"}'), ("100200300_telethon.session", tele),
              ("100200300_pyrogram.session", pyro), ("other.session", pyro), ("other.json", b'{"first_name": "B"}'),
              ("readme.txt", b"not a session")]
-    bundles = si.pair_files(files)
+    bundles, errors = si.pair_files(files)
     assert [(b.key, b.session.name, b.meta.label) for b in bundles] == [
         ("100200300", "100200300_telethon.session", "A"), ("other", "other.session", "B")]
+    assert errors == []
     # один json на единственную сессию подходит и при разных именах; zip раскрывается
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("acc/one.session", tele)
         zf.writestr("acc/params.json", b'{"phone": "1"}')
         zf.writestr("acc/cache/big.bin", b"x")
-    bundles = si.pair_files(si.expand_zips([("pack.zip", buf.getvalue())]))
-    assert len(bundles) == 1 and bundles[0].meta.label == "+1"
+    bundles, errors = si.pair_files(si.expand_zips([("pack.zip", buf.getvalue())]))
+    assert len(bundles) == 1 and bundles[0].meta.label == "+1" and errors == []
     with pytest.raises(si.ImportError_, match="нет сессии"):
         si.pair_files([("a.json", b"{}")])
     with pytest.raises(si.ImportError_, match="повреждён"):
         si.pair_files([("x.session", b"SQLite format 3\x00" + b"\x00" * 100)])
+
+
+def test_pair_files_keeps_errors_of_other_files(tmp_path):
+    from app import session_import as si
+
+    tele = _telethon_sqlite(tmp_path, bytes(256))
+    # повреждённая сессия и битый json рядом с нормальной парой — ошибки не теряются
+    bundles, errors = si.pair_files([
+        ("good.session", tele), ("good.json", b'{"first_name": "G"}'),
+        ("broken.session", b"SQLite format 3\x00" + b"\x00" * 100),
+        ("nojson.session", tele), ("nojson.json", b"{oops"),
+    ])
+    assert [b.session.name for b in bundles] == ["good.session"]
+    assert [e["file"] for e in errors] == ["broken.session", "nojson.json", "nojson.session"]
+    assert "повреждён" in errors[0]["error"] and "не подключён" in errors[2]["error"]
+
+
+def test_string_session_in_txt_file():
+    from telethon.crypto import AuthKey
+    from telethon.sessions import StringSession
+
+    from app import session_import as si
+
+    s = StringSession()
+    s.set_dc(2, "149.154.167.51", 443)
+    s.auth_key = AuthKey(bytes(range(256)))
+    text = StringSession.save(s).encode()
+    assert si.looks_like_session("account.txt", text)
+    assert not si.looks_like_session("readme.txt", b"just some notes about the account")
+    bundles, errors = si.pair_files([("account.txt", text), ("readme.txt", b"just some notes")])
+    assert len(bundles) == 1 and bundles[0].session.dc_id == 2 and errors == []
