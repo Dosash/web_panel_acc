@@ -1063,6 +1063,23 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
   border: 2px solid var(--bg); display: none;
 }
 .rail-tool.bot-tool .dot.online, .rail-tool.bot-tool .dot.error, .rail-tool.bot-tool .dot.connecting { display: block; }
+/* боты — отдельной карточкой в рейке, чтобы не сливались с кнопками настроек ниже */
+.rail-bots {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px; flex: none;
+  border-radius: 15px; background: var(--surface); border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge);
+}
+.rail-bots .rail-tool { width: 40px; height: 40px; color: var(--accent); }
+.rail-bots .rail-tool:hover { background: var(--accent-soft); color: var(--accent); }
+.rail-bots .rail-tool.on { color: #fff; background: var(--grad); box-shadow: var(--glow); }
+.rail-bots .rail-tool.bot-tool .dot { border-color: var(--surface); }
+/* версия панели под кнопками рейки */
+.rail-version {
+  flex: none; border: 0; background: transparent; cursor: pointer; padding: 2px 4px; margin-top: -4px;
+  border-radius: 6px; font-size: 10px; line-height: 1.2; color: var(--faint); font-variant-numeric: tabular-nums;
+  transition: color .2s, background .2s var(--ease);
+}
+.rail-version:hover { color: var(--text); background: var(--surface-2); }
 .app.bot-mode .sidebar, .app.bot-mode .chat { display: none; }
 .bot-view {
   grid-column: 2 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin-top: 8px;
