@@ -83,7 +83,13 @@ Fernet. Поле `api_json` — «отпечаток» клиента (api_id, �
 Последний релиз `Dosash/web_panel_acc` с GitHub API (`UPDATE_URL`), не чаще раза в 6 часов, результат в памяти.
 Сравнивает его с `VERSION` для `/api/update`. Фронтенд показывает значок справа внизу и окно «Обновление»:
 обновить программу (программа для компьютера сообщает свою версию в `window.TG_DESKTOP_APP` и ловит переход
-на `tg-desktop/update` — см. `desktop/shell.py`), панель на сервере (команда для `git pull`) или скачать с GitHub.
+на `tg-desktop/update` — см. `desktop/shell.py`), панель на сервере или скачать с GitHub.
+Панель на сервере обновляется кнопкой (`POST /api/update/install`). В Docker контейнер не может пересобрать сам
+себя, поэтому через `/var/run/docker.sock` (HTTP API Docker, без docker CLI) панель запускает рядом контейнер-помощник
+`docker:27-cli` с папкой проекта на хосте (её путь и имя проекта — из меток compose своего контейнера): он делает
+`git pull --ff-only` от владельца папки и `docker compose up -d --build`. Без Docker — `git pull` и `pip install` в
+папке панели, затем `app/__main__.py` штатно останавливает uvicorn и перезапускает процесс (`os.execv`).
+Страница опрашивает `/api/update/progress` и перезагружается, когда ответит новая версия.
 
 ### `app/main.py`
 FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`, раздача `static/`.

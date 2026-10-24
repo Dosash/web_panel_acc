@@ -58,6 +58,14 @@ def test_login_blocked_window():
     main._login_failures.clear()
 
 
+def test_self_update_unavailable(authed):
+    # в тестах нет ни Docker, ни перезапуска из app/__main__.py — кнопки нет, обновление не запускается
+    assert authed.get("/api/update").json()["self_update"] == ""
+    assert authed.get("/api/update/progress").json() == {"current": main.VERSION, "mode": "", "state": "idle",
+                                                         "log": "", "error": ""}
+    assert authed.post("/api/update/install").status_code == 400
+
+
 def test_folders_crud(authed):
     r = authed.post("/api/folders", json={"name": "  Работа  "})
     assert r.status_code == 200

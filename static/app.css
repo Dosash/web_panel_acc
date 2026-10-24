@@ -989,6 +989,15 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
 .upd-cmd code { flex: 1; min-width: 0; background: none; padding: 0; overflow-wrap: anywhere; user-select: all; }
 .upd-cmd .icon-btn svg.i { width: 16px; height: 16px; }
 .upd-hint { margin: 6px 0 0; text-align: center; }
+.upd-progress { margin-top: 10px; }
+.upd-step { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.upd-step .spinner { width: 18px; height: 18px; border-width: 2px; flex: none; }
+.upd-step .spinner[hidden] { display: none; }
+.upd-log { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2);
+  font: 11.5px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.upd-log[hidden] { display: none; }
+.upd-manual { margin-top: 10px; }
+.upd-manual summary { cursor: pointer; margin-bottom: 6px; }
 .upd-foot { display: flex; justify-content: center; margin-top: 16px; }
 .upd-line { margin-top: 2px; }
 .upd-line svg.i { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; }
