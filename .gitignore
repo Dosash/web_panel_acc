@@ -10,6 +10,13 @@ desktop/.venv/
 desktop/build/
 desktop/dist/
 desktop/release/
+# программа для Windows (desktop-win): сборка, значки из desktop/icon.svg, файлы Tauri
+desktop-win/.venv/
+desktop-win/build/
+desktop-win/release/
+desktop-win/shell/target/
+desktop-win/shell/icons/
+desktop-win/shell/gen/
 .pytest_cache/
 .ruff_cache/
 

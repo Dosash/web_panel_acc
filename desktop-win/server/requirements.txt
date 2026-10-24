@@ -1,0 +1,5 @@
+# Серверная часть TG Panel для Windows: зависимости панели + сборщик. Python 3.12.
+# PyQt5 приходит вместе с opentele (ему нужен только QtCore — остальное spec в сборку не берёт).
+-r ../../requirements.txt
+
+pyinstaller==6.22.3
