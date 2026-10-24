@@ -30,7 +30,7 @@ jobs:
       - name: ruff
         run: ruff check .
       - name: Компиляция
-        run: python -m compileall -q app bots desktop/*.py
+        run: python -m compileall -q app bots desktop/*.py desktop-win/server/*.py
       - name: Синтаксис JS интерфейсов
         run: |
           node --check static/app.js
