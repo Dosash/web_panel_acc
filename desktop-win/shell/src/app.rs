@@ -735,11 +735,9 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
             connect_cancel(app);
         }
         WindowEvent::Focused(focused) if label == MAIN => {
-            if *focused {
-                if let Some(w) = app.get_webview_window(MAIN) {
-                    webview::focus(&w);
-                }
-            } else {
+            // фокус клавиатуры в страницу переводит сам wry (WM_SETFOCUS). Своё отложенное MoveFocus здесь
+            // приходило посреди нажатия на кнопку заголовка и срывало «свернуть / развернуть / закрыть»
+            if !focused {
                 ui(|u| u.last_blur = Some(Instant::now()));
             }
             set_active(app);

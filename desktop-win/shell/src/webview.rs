@@ -457,13 +457,6 @@ pub fn post(window: &WebviewWindow, msg: &serde_json::Value) {
     });
 }
 
-/// Фокус клавиатуры — в страницу: иначе после Alt+Tab или щелчка по трею клавиши (F5, Ctrl+Q…) уходят окну.
-pub fn focus(window: &WebviewWindow) {
-    let _ = window.with_webview(|pw| unsafe {
-        let _ = pw.controller().MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-    });
-}
-
 pub fn reload(window: &WebviewWindow) {
     let _ = window.with_webview(|pw| unsafe {
         if let Ok(webview) = pw.controller().CoreWebView2() {
