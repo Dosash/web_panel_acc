@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from cryptography.fernet import Fernet
@@ -36,14 +37,23 @@ class Account:
         }
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+@contextmanager
+def _conn():
+    """Соединение на одну операцию: коммит при выходе, откат при ошибке и всегда close() —
+    голый `with sqlite3.connect()` соединение не закрывает. timeout — ждать, если база занята."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
     with _conn() as c:
+        # WAL: чтение не ждёт записи, файл базы не портится при обрыве питания посреди записи
+        c.execute("PRAGMA journal_mode=WAL")
         c.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +110,11 @@ def _row(r: sqlite3.Row) -> Account:
 def list_accounts() -> list[Account]:
     with _conn() as c:
         return [_row(r) for r in c.execute("SELECT * FROM accounts ORDER BY id")]
+
+
+def count_accounts() -> int:
+    with _conn() as c:
+        return c.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
 
 
 def get_account(account_id: int) -> Account | None:

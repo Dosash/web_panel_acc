@@ -96,7 +96,7 @@
     radial-gradient(45% 45% at 100% 100%, var(--wall-b), transparent 70%),
     var(--bg) fixed;
 }
-:root[data-app] .topbar { background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); }
+:root[data-app] .topbar { background: var(--bg); background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); }
 
 /* логотип раздела и активный пункт меню — фирменный градиент */
 :root[data-app] .product-logo, :root[data-app] .product__logo { background: var(--grad); color: #fff; border-radius: 10px; }

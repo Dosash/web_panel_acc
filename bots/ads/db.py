@@ -474,6 +474,20 @@ async def due_scheduled(ts: int) -> list[aiosqlite.Row]:
     return list(await cur.fetchall())
 
 
+async def stale_paid(before: int) -> list[aiosqlite.Row]:
+    """Заказы, застрявшие в PAID (процесс остановили посреди оплаты или публикации) — оплачены раньше before."""
+    cur = await db().execute(
+        "SELECT * FROM orders WHERE status = ? AND COALESCE(paid_at, created_at) <= ? ORDER BY id", (PAID, before))
+    return list(await cur.fetchall())
+
+
+async def published_channel_ids(order_id: int) -> dict[int, int]:
+    """{channel_id: message_id} — куда пост по заказу уже опубликован (чтобы не публиковать дважды)."""
+    cur = await db().execute(
+        "SELECT channel_id, message_id FROM publications WHERE order_id = ? AND message_id IS NOT NULL", (order_id,))
+    return {r[0]: r[1] for r in await cur.fetchall()}
+
+
 async def get_order(order_id: int) -> aiosqlite.Row | None:
     cur = await db().execute("SELECT * FROM orders WHERE id = ?", (order_id,))
     return await cur.fetchone()
@@ -516,9 +530,16 @@ async def update_order(order_id: int, **fields: Any) -> None:
     await db().commit()
 
 
+# счета CryptoBot и xRocket живут не дольше суток: заказы старше двух дней (и с прошедшим временем) не опрашиваем,
+# иначе список растёт бесконечно — их проверит кнопка «Я оплатил»
+POLL_WINDOW = 2 * 86400
+
+
 async def orders_with_xrocket_invoice() -> list[aiosqlite.Row]:
     cur = await db().execute(
-        "SELECT * FROM orders WHERE status = ? AND xr_invoice_id IS NOT NULL AND is_test = 0", (APPROVED,)
+        "SELECT * FROM orders WHERE status = ? AND xr_invoice_id IS NOT NULL AND is_test = 0"
+        " AND COALESCE(approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
+        (APPROVED, now() - POLL_WINDOW, now()),
     )
     return list(await cur.fetchall())
 
@@ -542,7 +563,9 @@ async def orders_with_fk_invoice(since: int) -> list[aiosqlite.Row]:
 
 async def orders_with_crypto_invoice() -> list[aiosqlite.Row]:
     cur = await db().execute(
-        "SELECT * FROM orders WHERE status = ? AND cp_invoice_id IS NOT NULL", (APPROVED,)
+        "SELECT * FROM orders WHERE status = ? AND cp_invoice_id IS NOT NULL"
+        " AND COALESCE(approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
+        (APPROVED, now() - POLL_WINDOW, now()),
     )
     return list(await cur.fetchall())
 

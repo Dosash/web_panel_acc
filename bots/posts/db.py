@@ -7,7 +7,8 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 import aiosqlite
 
@@ -154,7 +155,7 @@ CHANNEL_FIELDS = {
     "title", "username", "status", "can_post", "can_edit", "can_delete",
     "members_count", "added_by", "added_at", "updated_at",
     "folder_id", "slots_json",  # V2
-    "photo_id", "photo_checked_at",  # V2.6: avatar (app.services.avatars)
+    "photo_id", "photo_checked_at",  # V2.6: avatar (bots.posts.services.avatars)
 }
 
 
@@ -859,6 +860,27 @@ class Database:
         )
         return int(row["n"]) if row else 0
 
+    async def prune_history(self, before_ts: int) -> int:
+        """Drop statistics rows (subscriber snapshots, join/leave events, channel posts) older than
+        `before_ts` — the tables are append-only otherwise. Returns how many rows were removed."""
+        removed = 0
+        for table in ("member_snapshots", "member_events", "channel_posts"):
+            cur = await self.execute(f"DELETE FROM {table} WHERE ts < ?", (before_ts,))
+            removed += max(cur.rowcount, 0)
+        return removed
+
+    # ----------------------------------------------------------------- uploads
+    async def referenced_media_paths(self) -> set[str]:
+        """File names in the uploads dir that some post still refers to (`media_json` items' `path`
+        and the legacy `photo_path`), in one query."""
+        rows = await self.fetchall(
+            "SELECT photo_path AS path FROM posts WHERE photo_path IS NOT NULL "
+            "UNION SELECT json_extract(item.value, '$.path') AS path "
+            "FROM posts, json_each(COALESCE(posts.media_json, '[]')) AS item "
+            "WHERE json_extract(item.value, '$.path') IS NOT NULL"
+        )
+        return {str(r["path"]) for r in rows if r["path"]}
+
     # ------------------------------------------------------------ migrations
     async def ensure_column(self, table: str, column: str, ddl: str) -> bool:
         """Add `column` to `table` (``ALTER TABLE ... ADD COLUMN column ddl``) if it is missing.
@@ -880,7 +902,7 @@ class Database:
               into media_json and (once, when the column appears) of scheduled posts' time into
               their pending targets.
         V2.3: post_targets.sending_at — in-flight marker of a send (see recover_stuck_sending).
-        V2.6: channels.photo_id / photo_checked_at — the channel avatar (app.services.avatars).
+        V2.6: channels.photo_id / photo_checked_at — the channel avatar (bots.posts.services.avatars).
         """
         if getattr(self, "_migrated_conn", None) is self._conn and self._conn is not None:
             return

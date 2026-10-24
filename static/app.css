@@ -120,7 +120,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .badge.dim { background: var(--surface-3); color: var(--muted); }
 .chip {
   font-size: 11px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; flex: none; font-weight: 600;
-  background: color-mix(in srgb, var(--c) 18%, transparent); color: color-mix(in srgb, var(--c) 85%, var(--text));
+  background: var(--accent-soft); background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); color: color-mix(in srgb, var(--c) 85%, var(--text));
 }
 
 .brand-mark {
@@ -274,7 +274,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 }
 .dialog:hover { background: var(--surface-2); }
 .dialog.active { background: var(--accent-soft); }
-.dialog.active::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(79 140 255 / .35); pointer-events: none; }
+.dialog.active::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(79 140 255 / .35); pointer-events: none; }
 .dialog .acc-mark { position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--c); }
 .dialog .avatar { width: 52px; height: 52px; font-size: 17px; }
 .d-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
@@ -293,7 +293,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .avatar {
   width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; font-weight: 600;
   color: #fff; overflow: hidden; flex: none; font-size: 16px; letter-spacing: .02em;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--c, #4f8cff) 80%, #fff), var(--c, #4f8cff));
+  background: var(--c, #4f8cff); background: linear-gradient(145deg, color-mix(in srgb, var(--c, #4f8cff) 80%, #fff), var(--c, #4f8cff));
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; animation: fade .25s ease-out; }
 .avatar.sm { width: 40px; height: 40px; font-size: 14px; }
@@ -332,7 +332,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 
 .chat-head {
   display: flex; align-items: center; gap: 12px; padding: 10px 16px; min-height: 64px; z-index: 3;
-  background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: blur(16px);
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
 }
 .chat-meta { flex: 1; min-width: 0; }
@@ -344,12 +344,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .messages { flex: 1; overflow-y: auto; padding: 18px max(16px, calc((100% - 760px) / 2)) 12px; display: flex; flex-direction: column; }
 .day-sep {
   align-self: center; position: sticky; top: 4px; z-index: 2; margin: 12px 0 8px;
-  background: color-mix(in srgb, var(--surface) 75%, transparent); backdrop-filter: blur(10px);
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 75%, transparent); backdrop-filter: blur(10px);
   color: var(--muted); padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border);
 }
 .service {
   align-self: center; color: var(--muted); font-size: 12.5px; margin: 6px 0; text-align: center;
-  background: color-mix(in srgb, var(--surface) 70%, transparent); padding: 4px 12px; border-radius: 999px;
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 70%, transparent); padding: 4px 12px; border-radius: 999px;
 }
 
 .msg { max-width: min(540px, 80%); align-self: flex-start; position: relative; margin-top: 2px; }
@@ -421,7 +421,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .msg .media.spoiler-media { position: relative; overflow: hidden; border-radius: 13px; cursor: pointer; }
 .spoiler-media:not(.revealed) img, .spoiler-media:not(.revealed) video { filter: blur(28px) saturate(1.2); transform: scale(1.12); }
 .spoiler-cover {
-  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-content: center; justify-items: center; gap: 6px;
   color: #fff; font-weight: 600; font-size: 13px; background: rgb(0 0 0 / .25); text-shadow: 0 1px 4px rgb(0 0 0 / .5);
 }
 .spoiler-cover svg.i { width: 26px; height: 26px; }
@@ -434,7 +434,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .kb-btn {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; position: relative;
   padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); cursor: pointer;
-  background: color-mix(in srgb, var(--bubble-in) 82%, transparent); backdrop-filter: blur(10px);
+  background: var(--bubble-in); background: color-mix(in srgb, var(--bubble-in) 82%, transparent); backdrop-filter: blur(10px);
   color: var(--text); font-weight: 600; font-size: 13.5px; text-decoration: none; text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .15s, transform .1s;
 }
@@ -458,7 +458,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .kb-btn.st-primary:hover { background: var(--kb-primary); filter: brightness(1.08); }
 .kb-btn.st-success:hover { background: var(--kb-success); filter: brightness(1.08); }
 .kb-btn.st-danger:hover { background: var(--kb-danger); filter: brightness(1.08); }
-.kb-btn.st .kb-ic { color: color-mix(in srgb, var(--kb-on) 80%, transparent); }
+.kb-btn.st .kb-ic { color: var(--kb-on); color: color-mix(in srgb, var(--kb-on) 80%, transparent); }
 .kb-btn.st.loading::after { border-color: var(--kb-on); border-top-color: transparent; }
 .msg .misc { display: flex; gap: 8px; align-items: center; padding: 2px 4px; }
 
@@ -487,7 +487,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .composer-wrap { padding: 0 max(16px, calc((100% - 760px) / 2)) 16px; display: grid; gap: 6px; }
 .reply-bar {
   display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(14px); border: 1px solid var(--border);
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(14px); border: 1px solid var(--border);
   animation: pop .15s ease-out;
 }
 .reply-icon { color: var(--accent); }
@@ -496,7 +496,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .reply-body #reply-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .composer {
   display: flex; gap: 6px; align-items: flex-end; padding: 6px; border-radius: 22px;
-  background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(16px);
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(16px);
   border: 1px solid var(--border-strong); box-shadow: var(--shadow-sm);
 }
 .composer:focus-within { border-color: rgb(79 140 255 / .5); }
@@ -517,7 +517,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .composer .post-btn:hover { background: var(--accent-soft); color: var(--accent); }
 .readonly-bar {
   padding: 13px; text-align: center; border-radius: 16px; color: var(--muted); display: flex; gap: 8px; justify-content: center; align-items: center;
-  background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
+  background: var(--surface); background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--border);
 }
 .readonly-bar svg.i { width: 16px; height: 16px; }
 .readonly-bar { flex-wrap: wrap; }
@@ -542,7 +542,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 
 /* ================= Мини-приложения ================= */
 .webapp-overlay {
-  position: fixed; inset: 0; z-index: 55; display: grid; place-items: center; padding: 16px;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 55; display: grid; place-items: center; padding: 16px;
   background: rgb(3 7 18 / .6); backdrop-filter: blur(6px); animation: fade .15s ease-out;
 }
 .webapp {
@@ -556,9 +556,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .webapp .wa-back { margin-left: -6px; }
 .webapp .wa-title { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wa-body { position: relative; flex: 1; min-height: 0; background: var(--elev); }
-.wa-body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--elev); }
+.wa-body iframe { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; border: 0; background: var(--elev); }
 .wa-loading {
-  position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 14px;
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 14px;
   padding: 24px; text-align: center; background: var(--elev);
 }
 .wa-loading[hidden] { display: none; }
@@ -586,7 +586,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 
 /* ================= Модальные окна ================= */
 .modal {
-  position: fixed; inset: 0; background: rgb(3 7 18 / .6); backdrop-filter: blur(6px);
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgb(3 7 18 / .6); backdrop-filter: blur(6px);
   display: grid; place-items: center; padding: 16px; z-index: 50; animation: fade .15s ease-out;
 }
 .modal-card {
@@ -612,7 +612,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 /* аватар с карандашом: нажатие меняет фото */
 .ava-edit { position: relative; display: block; cursor: pointer; border-radius: 50%; flex: none; }
 .ava-edit::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%; background: rgb(0 0 0 / .35);
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 50%; background: rgb(0 0 0 / .35);
   opacity: 0; transition: opacity .15s;
 }
 .ava-edit:hover::after { opacity: 1; }
@@ -706,7 +706,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .support-link > svg.i { width: 16px; height: 16px; color: var(--faint); }
 .support-link .si {
   width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; flex: none;
-  color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent);
+  color: var(--c); background: var(--accent-soft); background: color-mix(in srgb, var(--c) 16%, transparent);
 }
 
 /* управление каналом: приглашение, админы, права */
@@ -759,7 +759,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .pe-text a { text-decoration: underline; }
 .pe-count { text-align: right; padding: 0 12px 8px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .pe-count.over { color: var(--danger); font-weight: 600; }
-.pe-sec { display: grid; gap: 10px; padding: 14px; border-radius: var(--r-md); border: 1px solid var(--border); background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+.pe-sec { display: grid; gap: 10px; padding: 14px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-2); background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
 .pe-sec-head { display: flex; align-items: baseline; gap: 8px; }
 .pe-attach { justify-self: start; cursor: pointer; }
 .pe-file { display: flex; align-items: center; gap: 10px; }
@@ -905,7 +905,7 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
   .rail-item::before { display: none; }
   .brand-mark { width: 36px; height: 36px; }
   .sidebar { border-radius: 18px 0 0 0; }
-  .chat { position: fixed; inset: 0; z-index: 10; margin: 0; border: 0; }
+  .chat { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; margin: 0; border: 0; }
   .chat.empty { display: none; }
   .back { display: inline-grid; }
   .chat-head { padding: 8px 10px; }
@@ -940,7 +940,7 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
 .bot-sub { font-size: 12.5px; }
 .icon-btn.on { color: var(--accent); background: var(--accent-soft); }
 .bot-body { flex: 1; min-height: 0; position: relative; overflow: auto; }
-.bot-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+.bot-frame { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
 .bot-setup { min-height: 100%; display: grid; place-items: center; padding: 28px 16px; }
 .bot-card { width: min(520px, 100%); }
 .bot-card h2 { margin: 14px 0 6px; }

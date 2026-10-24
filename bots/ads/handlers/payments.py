@@ -19,6 +19,9 @@ from bots.ads.ui import MenuCb, OrdCb, PayCb, fmt_usd, status_title
 
 log = logging.getLogger(__name__)
 router = Router(name="payments")
+# подключается в диспетчер ПЕРВЫМ: сообщение об оплате звёздами не должен перехватить ни приём поста для
+# рассылки, ни FSM-обработчики админки и поддержки (иначе оплата потеряется)
+early_router = Router(name="payments_early")
 
 
 async def get_payable(call: CallbackQuery, order_id: int, currency: str | None = None):
@@ -72,7 +75,7 @@ async def pay_stars(call: CallbackQuery, callback_data: PayCb, bot: Bot):
     await call.answer()
 
 
-@router.pre_checkout_query()
+@early_router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
     lang = await user_lang(query.from_user)
     try:
@@ -92,7 +95,7 @@ async def pre_checkout(query: PreCheckoutQuery):
     await query.answer(ok=True)
 
 
-@router.message(F.successful_payment)
+@early_router.message(F.successful_payment)
 async def successful_payment(message: Message, bot: Bot):
     sp = message.successful_payment
     order_id = int(sp.invoice_payload.split(":")[1])

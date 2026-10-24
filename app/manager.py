@@ -19,6 +19,17 @@ from . import storage
 log = logging.getLogger("panel")
 
 
+class NoAccount(KeyError):
+    """Аккаунта с таким id в панели нет (или он ещё не загружен)."""
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else ""
+
+
+class NotConnected(RuntimeError):
+    """Аккаунт есть, но клиент не в сети: не подключился, ошибка сессии или идёт подключение."""
+
+
 def parse_proxy(url: str) -> dict | None:
     """socks5://user:pass@host:port или http://host:port → формат прокси Telethon."""
     if not url:
@@ -257,6 +268,9 @@ def dialog_dict(account_id: int, d) -> dict:
 
 # ---------- менеджер ----------
 
+SEND_TIMEOUT = 10
+
+
 class Hub:
     """WebSocket-подписчики панели."""
 
@@ -265,11 +279,16 @@ class Hub:
 
     async def send(self, event: dict) -> None:
         data = json.dumps(event, ensure_ascii=False, default=str)
-        for ws in list(self.sockets):
-            try:
-                await ws.send_text(data)
-            except Exception:
-                self.sockets.discard(ws)
+        if not self.sockets:
+            return
+        await asyncio.gather(*(self._send_one(ws, data) for ws in list(self.sockets)))
+
+    async def _send_one(self, ws, data: str) -> None:
+        try:
+            # зависшее соединение (ноутбук уснул, сеть пропала) не держит остальных: 10 с и отключаем
+            await asyncio.wait_for(ws.send_text(data), SEND_TIMEOUT)
+        except Exception:
+            self.sockets.discard(ws)
 
 
 class Live:
@@ -288,6 +307,8 @@ class Manager:
         self.hub = Hub()
         self.live: dict[int, Live] = {}
         self._media_slots: dict[int, asyncio.Semaphore] = {}
+        self._start_locks: dict[int, asyncio.Lock] = {}
+        self._dialog_locks: dict[int, asyncio.Lock] = {}
 
     def media_slot(self, account_id: int) -> asyncio.Semaphore:
         if account_id not in self._media_slots:
@@ -297,13 +318,13 @@ class Manager:
     def get(self, account_id: int) -> Live:
         live = self.live.get(account_id)
         if live is None:
-            raise KeyError(account_id)
+            raise NoAccount(account_id)
         return live
 
     def client(self, account_id: int) -> TelegramClient:
         live = self.get(account_id)
         if live.client is None or live.status != "online":
-            raise RuntimeError(f"Аккаунт «{live.account.name}» не подключён: {live.error or live.status}")
+            raise NotConnected(f"Аккаунт «{live.account.name}» не подключён: {live.error or live.status}")
         return live.client
 
     def state(self, account_id: int) -> dict:
@@ -317,6 +338,13 @@ class Manager:
         await asyncio.gather(*(self.stop(i) for i in list(self.live)))
 
     async def start(self, account: storage.Account) -> None:
+        # Под замком: «Переподключить» дважды подряд (или смена прокси во время подключения) иначе
+        # оставляла первый клиент подключённым вне self.live — события от него приходили дважды
+        lock = self._start_locks.setdefault(account.id, asyncio.Lock())
+        async with lock:
+            await self._start(account)
+
+    async def _start(self, account: storage.Account) -> None:
         await self.stop(account.id)
         live = Live(account)
         self.live[account.id] = live
@@ -345,6 +373,10 @@ class Manager:
             log.exception("Не удалось подключить аккаунт %s", account.name)
             live.status, live.error = "error", str(e) or type(e).__name__
             await self._drop_client(live)
+        if self.live.get(account.id) is not live:
+            # пока подключались, аккаунт удалили — клиент никому не нужен
+            await self._drop_client(live)
+            return
         await self._status(live)
 
     async def stop(self, account_id: int) -> None:
@@ -392,6 +424,16 @@ class Manager:
             await self.hub.send({"type": "read", "account_id": aid, "chat_id": event.chat_id,
                                  "max_id": event.max_id, "outbox": event.outbox, "unread": unread})
 
+    async def mark_dead(self, account_id: int, error: str) -> None:
+        """Telegram отверг ключ сессии уже после подключения (сеанс завершили в другом клиенте):
+        переводим аккаунт в «ошибку», чтобы панель показала это, а не 400 на каждый запрос."""
+        live = self.live.get(account_id)
+        if live is None or live.status != "online":
+            return
+        live.status, live.error = "error", error
+        await self._drop_client(live)
+        await self._status(live)
+
     # ---------- помощники ----------
 
     async def entity(self, account_id: int, chat_id: int):
@@ -403,8 +445,12 @@ class Manager:
         except ValueError:
             if live.dialogs_loaded:
                 raise
-            await client.get_dialogs(limit=None)
-            live.dialogs_loaded = True
+            # после перезапуска первые запросы к чатам приходят пачкой — диалоги грузит только первый
+            lock = self._dialog_locks.setdefault(account_id, asyncio.Lock())
+            async with lock:
+                if not live.dialogs_loaded:
+                    await client.get_dialogs(limit=None)
+                    live.dialogs_loaded = True
             return await client.get_input_entity(chat_id)
 
     async def read_chat(self, account_id: int, entity, max_id: int = 0) -> None:

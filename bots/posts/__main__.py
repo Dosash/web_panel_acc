@@ -34,7 +34,7 @@ from typing import Any, NamedTuple, TypeVar
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramRetryAfter, TelegramUnauthorizedError
+from aiogram.exceptions import TelegramNotFound, TelegramRetryAfter, TelegramUnauthorizedError
 from aiogram.types import BotCommandScopeAllPrivateChats, User
 from aiohttp import web
 
@@ -82,6 +82,7 @@ TELEGRAM_RETRY_MAX = 60.0  # max pause (exponential backoff)
 SITE_BIND_ATTEMPTS = 20  # after a restart: tries to bind the web port again…
 SITE_BIND_RETRY = 0.5  # …this many seconds apart
 RECHECK_PAUSE = 0.05  # between channels while re-checking them after the bot was changed
+RECHECK_RETRY_MAX_WAIT = 60.0  # flood control while re-checking: wait at most this long, then retry once
 
 # `run()` result: start again (the bot token was changed in the panel, or the panel token was
 # rejected by Telegram and the next run uses BOT_TOKEN from .env).
@@ -150,7 +151,7 @@ async def recheck_channels(bot: Any, db: Database, *, pause: float = RECHECK_PAU
             await asyncio.sleep(pause)
         was_active = index < len(active)
         try:
-            row = await channels_service.refresh_channel(bot, db, channel["id"])
+            row = await _refresh_with_flood_retry(bot, db, channel["id"])
         except Exception as exc:  # network trouble: the channel stays as it is
             if was_active:
                 failed += 1
@@ -163,6 +164,19 @@ async def recheck_channels(bot: Any, db: Database, *, pause: float = RECHECK_PAU
         elif not was_active and row.get("status") == CH_ACTIVE:
             restored += 1
     return Recheck(len(active) + restored, missing, failed, restored)
+
+
+async def _refresh_with_flood_retry(bot: Any, db: Database, channel_id: int) -> dict:
+    """`refresh_channel`; when Telegram asks to wait (flood control — three calls per channel add
+    up over many channels), wait that long (≤ RECHECK_RETRY_MAX_WAIT) and try the channel once more
+    instead of counting it as failed and hurrying on to the next one."""
+    try:
+        return await channels_service.refresh_channel(bot, db, channel_id)
+    except TelegramRetryAfter as exc:
+        wait = min(max(float(exc.retry_after), 1.0), RECHECK_RETRY_MAX_WAIT)
+        log.warning("Проверка канала %s: Telegram просит подождать %.0f с", channel_id, wait)
+        await asyncio.sleep(wait)
+        return await channels_service.refresh_channel(bot, db, channel_id)
 
 
 def bot_changed_text(username: str | None, total: int, missing: int, failed: int = 0, *,
@@ -270,7 +284,9 @@ async def wait_for_telegram(bot: Bot, stop: asyncio.Event | None = None, *,
     """getMe until Telegram answers, with exponential backoff (`initial_delay` … `max_delay`).
 
     Uses the cached `bot.me()`, so aiogram's polling does not call getMe again. Returns None when
-    `stop` was set while waiting; raises TelegramUnauthorizedError for a wrong token.
+    `stop` was set while waiting; raises TelegramUnauthorizedError for a wrong token (a 404 —
+    TelegramNotFound, a token that only looks like one — is re-raised as the same error, so the
+    callers have one case to handle).
     """
     stop = stop or asyncio.Event()
     delay = initial_delay
@@ -279,6 +295,8 @@ async def wait_for_telegram(bot: Bot, stop: asyncio.Event | None = None, *,
             done, me = await _until_stopped(bot.me(), stop)
         except TelegramUnauthorizedError:
             raise
+        except TelegramNotFound as exc:
+            raise TelegramUnauthorizedError(method=exc.method, message=exc.message) from exc
         except Exception as exc:  # network down, DNS not ready, Telegram 5xx, flood control…
             pause = float(exc.retry_after) if isinstance(exc, TelegramRetryAfter) else delay
             log.warning("Telegram недоступен (%s) — повтор через %.0f с. Веб-панель и планировщик работают.",
@@ -446,6 +464,17 @@ async def _cancel(task: asyncio.Task[Any]) -> None:
         await task
 
 
+async def _logged(name: str, coro: Awaitable[Any]) -> None:
+    """Run a background chore; an unexpected exception is logged here (the task is otherwise only
+    awaited by `_cancel` at shutdown, which would drop it silently)."""
+    try:
+        await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("Фоновая задача %s завершилась ошибкой", name)
+
+
 def _finish(control: _RunControl, runtime: Runtime) -> int | str:
     """Result of a run that stopped normally: RESTART when the panel asked for it, else 0."""
     if control.restarting:
@@ -475,6 +504,11 @@ async def run(config: Config, runtime: Runtime | None = None, *,
         await seed_admins(db, config.admin_ids)
 
         token, token_state = await resolve_token(db, config, runtime)
+        if not is_bot_token(token):
+            # The panel token is checked by resolve_token; BOT_TOKEN from .env only for being set
+            # (load_config) — a malformed one would raise out of make_bot() as a bare traceback.
+            log.error("BOT_TOKEN в .env не похож на токен бота (пример: 123456789:AA…) — проверьте его")
+            return 1
         log.info("Токен бота: %s (%s)", "задан в веб-панели" if token_state.source == TOKEN_SOURCE_PANEL
                  else "из .env", token_state.masked)
         bot = make_bot(token)
@@ -527,7 +561,7 @@ async def run(config: Config, runtime: Runtime | None = None, *,
             ("polling-stopper", _stop_polling_on(control.stop, dp)),
         )
         for name, coro in background:
-            stack.push_async_callback(_cancel, asyncio.create_task(coro, name=name))
+            stack.push_async_callback(_cancel, asyncio.create_task(_logged(name, coro), name=name))
 
         await dp.start_polling(
             bot,

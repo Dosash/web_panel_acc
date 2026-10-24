@@ -3,7 +3,8 @@
 `Scheduler` runs two asyncio tasks: one publishes due post targets every `poll_interval` seconds
 (each channel of a post may have its own time — V2 content plan), the other stores
 subscriber-count snapshots every `snapshot_interval` seconds (immediately at start, then
-periodically). A failing iteration is logged and the loop goes on. Stopping lets a publishing run
+periodically) and does the housekeeping (channel avatars, stale uploads, old statistics rows —
+bots.posts.services.cleanup). A failing iteration is logged and the loop goes on. Stopping lets a publishing run
 in progress finish instead of cutting it mid-send; `request_stop()` (at the start of a graceful
 shutdown) makes the loops pick no new post right away. `Scheduler.status()` reports the loops'
 health (for ``/api/health``).
@@ -27,7 +28,7 @@ from zoneinfo import ZoneInfo
 from aiogram.types import LinkPreviewOptions
 
 from bots.posts.db import POST_FAILED, POST_PARTIAL, POST_SCHEDULED, POST_SENT, TARGET_PENDING, now
-from bots.posts.services import avatars, channels
+from bots.posts.services import avatars, channels, cleanup
 from bots.posts.services.posting import (
     NO_TARGETS_ERROR,
     PostError,
@@ -268,6 +269,16 @@ class Scheduler:
             await avatars.sync_all(self.bot, self.db, self.config.uploads_dir)
         except Exception:
             log.warning("Avatar sync failed", exc_info=True)
+        # Housekeeping (bots.posts.services.cleanup): stale uploads / preview cache and old statistics rows.
+        # Failures are logged here, never raised: the snapshots loop must go on.
+        try:
+            await cleanup.sweep_uploads(self.db, self.config.uploads_dir)
+        except Exception:
+            log.exception("Uploads sweep failed")
+        try:
+            await cleanup.prune_history(self.db)
+        except Exception:
+            log.exception("Statistics pruning failed")
 
     async def run_due_posts(self) -> int:
         """Publish the targets whose time has come, post by post. Returns the number of due posts

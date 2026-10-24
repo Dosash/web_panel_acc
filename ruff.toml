@@ -1,0 +1,22 @@
+# Правила ruff для панели (app/), ботов (bots/) и программы (desktop/). Запуск: ruff check .
+target-version = "py312"
+line-length = 120
+extend-exclude = [".venv", "desktop/.venv", "desktop/build", "desktop/dist", "desktop/release", "data"]
+
+[lint]
+# E/W — pycodestyle, F — pyflakes, B — bugbear (типичные ошибки), UP — устаревший синтаксис,
+# ASYNC — ловушки asyncio, PLE — ошибки pylint, RUF006 — задачи asyncio без ссылки на них
+select = ["E", "F", "W", "B", "UP", "ASYNC", "PLE", "RUF006", "RUF100"]
+ignore = [
+    "E501",     # длина строк — на совести автора
+    "B008",     # Depends()/File()/Form() в значениях по умолчанию — так устроен FastAPI
+    "B904",     # raise без from внутри except — в коде панели это осознанно
+    "B905",     # zip без strict
+    "UP007", "UP045",  # Optional[...] там, где он читается лучше
+    "UP047",    # generic-функции через TypeVar
+    "ASYNC109", # параметр timeout у async-функций — осознанный выбор ботов
+    "E731",     # лямбда в переменной
+]
+
+[lint.per-file-ignores]
+"desktop/launcher.py" = ["E402"]   # sys.path правится до импортов

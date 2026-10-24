@@ -1,0 +1,5 @@
+# Проверки кода и тесты: pip install -r requirements-dev.txt (см. docs/DEVELOPMENT.md, раздел «Проверки»)
+-r requirements.txt
+ruff==0.17.2
+pytest==9.1.1
+httpx2

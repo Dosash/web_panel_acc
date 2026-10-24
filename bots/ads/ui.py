@@ -8,7 +8,7 @@ from bots.ads import db
 from bots.ads.config import config
 from bots.ads.channel_info import channel_link
 from bots.ads.i18n import LANG_NAMES, LANGS, t
-from bots.ads.prices import ch_price, fmt_price, fmt_usd, has_price, order_price, short_price  # noqa: F401
+from bots.ads.prices import ch_price, fmt_price, fmt_usd, has_price, order_price, short_price
 from bots.ads.slots import fmt_ts
 
 PAGE_SIZE = 10          # каналов на странице у пользователя

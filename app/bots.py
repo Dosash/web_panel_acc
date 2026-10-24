@@ -34,6 +34,7 @@ TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
 LOG_LIMIT = 5 * 1024 * 1024  # bot.log больше этого — начинаем заново
 STOP_TIMEOUT = 75  # бот постинга даёт идущим публикациям до ~72 с (bots/posts/__main__.py)
 READY_TIMEOUT = 60
+PROBE_TIMEOUT = 8  # /api/health бота постинга при недоступном Telegram отвечает до ~5 с
 RESTART_DELAYS = (2, 5, 15, 30, 60)
 # Переменные панели и ботов, которые не должны попасть к боту из окружения панели
 _ENV_DROP = re.compile(r"^(WEB_|PANEL_|HUB_URL$|BOT_TOKEN$|ADMIN_IDS$|DB_PATH$|UPLOADS_DIR$|CRYPTOPAY_|XROCKET_|"
@@ -74,8 +75,8 @@ async def check_token(token: str) -> dict:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
             async with s.get(f"https://api.telegram.org/bot{token}/getMe") as r:
                 data = await r.json(content_type=None)
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        raise RuntimeError("Не удалось связаться с Telegram — проверьте интернет на сервере") from None
+    except (aiohttp.ClientError, TimeoutError):
+        raise ValueError("Не удалось связаться с Telegram — проверьте интернет на сервере") from None
     if not data.get("ok"):
         raise ValueError("Telegram не принял токен — возьмите актуальный у @BotFather")
     return data["result"]
@@ -198,14 +199,14 @@ class BotProcess:
         """Ждём, пока панель бота ответит; False — за READY_TIMEOUT не ответила или процесс завершился."""
         url = f"http://127.0.0.1:{self.port}{self.prefix}/api/health"
         deadline = time.monotonic() + READY_TIMEOUT
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as s:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=PROBE_TIMEOUT)) as s:
             while time.monotonic() < deadline and self.proc and self.proc.poll() is None:
                 try:
                     async with s.get(url, headers={"X-TG-Panel-Key": self.key}) as r:
                         if r.status < 500:
                             self._remember_identity(await r.json(content_type=None))
                             return True
-                except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                except (aiohttp.ClientError, TimeoutError, ValueError):
                     pass
                 await asyncio.sleep(0.5)
         return False
@@ -276,7 +277,7 @@ class BotProcess:
             proc.terminate()  # SIGTERM: бот корректно завершает публикации (под Windows — сразу)
             try:
                 await asyncio.wait_for(asyncio.to_thread(proc.wait), STOP_TIMEOUT)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await asyncio.to_thread(proc.wait)
         if proc and proc.stdin and not proc.stdin.closed:
@@ -357,7 +358,13 @@ def in_background(coro) -> None:
     """Остановка бота занимает до STOP_TIMEOUT: запрос из интерфейса не ждёт её (таймаут nginx — 60 с)."""
     task = asyncio.create_task(coro)
     _background.add(task)
-    task.add_done_callback(_background.discard)
+    task.add_done_callback(_background_done)
+
+
+def _background_done(task: asyncio.Task) -> None:
+    _background.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        log.error("Фоновая операция с ботом не удалась", exc_info=task.exception())
 
 
 async def start_all() -> None:

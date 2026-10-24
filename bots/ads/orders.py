@@ -144,8 +144,21 @@ async def notify_new_moderation(bot: Bot, order_id: int, is_test: bool = False) 
 
 
 # ---------- оплата и публикация ----------
+# заказы, которые сейчас обрабатываются (оплата, публикация) — recover_paid их не трогает
+_in_flight: set[int] = set()
+PAID_STALE = 120   # заказ в PAID дольше этого (с) — процесс прервали посреди оплаты или публикации
+
+
 async def handle_paid(bot: Bot, order_id: int, method: str, **fields) -> None:
     """Вызывается при успешной оплате любым способом."""
+    _in_flight.add(order_id)
+    try:
+        await _handle_paid(bot, order_id, method, **fields)
+    finally:
+        _in_flight.discard(order_id)
+
+
+async def _handle_paid(bot: Bot, order_id: int, method: str, **fields) -> None:
     ok = await db.change_status(order_id, db.APPROVED, db.PAID, pay_method=method, paid_at=db.now(), **fields)
     if not ok:
         order = await db.get_order(order_id)
@@ -163,18 +176,23 @@ async def handle_paid(bot: Bot, order_id: int, method: str, **fields) -> None:
         await refund_test_stars(bot, order, lang)
 
     paid = paid_amount(order, method)
+    # время прошло, пока пользователь платил (ссылка FreeKassa не истекает) — в прошлое не бронируем
+    # и «сразу» не публикуем: пусть выберет новое время
+    if order["publish_at"] and order["publish_at"] <= db.now():
+        await _need_time(bot, order, lang, t(lang, "n_time_passed", id=order_id, t=fmt_ts(order["publish_at"], lang)),
+                         f"⚠️ Заказ #{order_id} оплачен ({paid}, {method}), но выбранное время уже прошло — "
+                         "пользователь выбирает новое.")
+        return
     # бронируем время только сейчас, после оплаты
     if order["publish_at"]:
         try:
             await db.book_order(order_id, order["publish_at"])
         except db.SlotBusy as e:
             taken = ", ".join(escape(c["title"]) for c in await db.get_channels(e.channel_ids))
-            await db.update_order(order_id, status=db.NEED_TIME, publish_at=None)
-            await notify(bot, order["user_id"],
-                         t(lang, "n_need_time", id=order_id, t=fmt_ts(order["publish_at"], lang), names=taken),
-                         [[button(t(lang, "btn_pick_time"), OrdCb(action="resched", id=order_id))]])
-            await notify_admins(bot, f"⚠️ Заказ #{order_id} оплачен ({paid}, {method}), но его время заняли — "
-                                     "пользователь выбирает новое.")
+            await _need_time(bot, order, lang,
+                             t(lang, "n_need_time", id=order_id, t=fmt_ts(order["publish_at"], lang), names=taken),
+                             f"⚠️ Заказ #{order_id} оплачен ({paid}, {method}), но его время заняли — "
+                             "пользователь выбирает новое.")
             return
 
     # время ещё не наступило — ставим в очередь, планировщик опубликует сам
@@ -188,6 +206,42 @@ async def handle_paid(bot: Bot, order_id: int, method: str, **fields) -> None:
                                      f"⏰ Публикация {fmt_ts(order['publish_at'])}.")
         return
     await publish(bot, order)
+
+
+async def _need_time(bot: Bot, order, lang, user_text: str, admin_text: str) -> None:
+    """Оплаченный заказ остался без времени — пользователь выбирает новое, модерация не нужна."""
+    await db.update_order(order["id"], status=db.NEED_TIME, publish_at=None)
+    await notify(bot, order["user_id"], user_text,
+                 [[button(t(lang, "btn_pick_time"), OrdCb(action="resched", id=order["id"]))]])
+    await notify_admins(bot, admin_text)
+
+
+async def recover_paid(bot: Bot) -> None:
+    """Заказы, застрявшие в PAID: процесс остановили между оплатой и постановкой в очередь или посреди публикации.
+    Время впереди — бронируем и ставим в очередь; иначе публикуем (каналы, куда пост уже ушёл, пропускаются)."""
+    for order in await db.stale_paid(db.now() - PAID_STALE):
+        if order["id"] in _in_flight:
+            continue
+        log.warning("заказ #%s завис в статусе PAID — довожу до конца", order["id"])
+        try:
+            if order["publish_at"] and order["publish_at"] > db.now() + 30:
+                lang = await db.get_lang(order["user_id"])
+                try:
+                    await db.book_order(order["id"], order["publish_at"])
+                except db.SlotBusy as e:
+                    taken = ", ".join(escape(c["title"]) for c in await db.get_channels(e.channel_ids))
+                    await _need_time(bot, order, lang,
+                                     t(lang, "n_need_time", id=order["id"], t=fmt_ts(order["publish_at"], lang),
+                                       names=taken),
+                                     f"⚠️ Заказ #{order['id']} оплачен, но его время заняли — пользователь выбирает новое.")
+                    continue
+                await db.update_order(order["id"], status=db.SCHEDULED)
+                await notify(bot, order["user_id"],
+                             t(lang, "n_scheduled", id=order["id"], t=fmt_ts(order["publish_at"], lang)), orders_btn(lang))
+            else:
+                await publish(bot, order)
+        except Exception:
+            log.exception("recover order #%s failed", order["id"])
 
 
 async def refund_test_stars(bot: Bot, order, lang) -> None:
@@ -214,8 +268,12 @@ async def publish(bot: Bot, order) -> None:
             await cleanup_source(bot, order)
         return
     channels = await db.get_channels(db.order_channel_ids(order))
+    already = await db.published_channel_ids(order["id"])   # после прерванной публикации — не дублировать
     done, failed = [], []
     for ch in channels:
+        if ch["id"] in already:
+            done.append(f'• <a href="{post_url(ch, already[ch["id"]])}">{escape(ch["title"])}</a>')
+            continue
         try:
             mid = await copy_post(bot, order, ch["chat_id"])
             await db.add_publication(order["id"], ch["id"], ch["chat_id"], mid, None)
@@ -253,10 +311,12 @@ async def publish_test(bot: Bot, order) -> bool:
     ok = False
     if config.test_channel_id:
         try:
-            mid = await copy_post(bot, order, config.test_channel_id)
+            already = await db.published_channel_ids(order["id"])   # прерванная публикация — не дублировать
+            mid = already.get(0) or await copy_post(bot, order, config.test_channel_id)
             chat = await bot.get_chat(config.test_channel_id)
             url = post_url({"username": chat.username, "chat_id": chat.id}, mid)
-            await db.add_publication(order["id"], 0, config.test_channel_id, mid, None)
+            if 0 not in already:
+                await db.add_publication(order["id"], 0, config.test_channel_id, mid, None)
             ok = True
             result = f'✅ Опубликовано в тестовый канал: <a href="{url}">{escape(chat.title or "")}</a>'
         except Exception as e:
@@ -379,5 +439,10 @@ async def run_scheduler(bot: Bot) -> None:
     for order in await db.due_scheduled(ts):
         # «захватываем» заказ, чтобы не опубликовать дважды
         if await db.change_status(order["id"], db.SCHEDULED, db.PAID):
-            await publish(bot, await db.get_order(order["id"]))
+            _in_flight.add(order["id"])
+            try:
+                await publish(bot, await db.get_order(order["id"]))
+            finally:
+                _in_flight.discard(order["id"])
+    await recover_paid(bot)
 

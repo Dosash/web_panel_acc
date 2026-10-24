@@ -1341,6 +1341,7 @@ function postEditor() {
 $("#post-btn").onclick = postEditor;
 
 // ---------- realtime ----------
+let wsWasOpen = false;
 function connectWS() {
   // адрес относительно страницы: панель может стоять не в корне сайта (WEB_PREFIX)
   const url = new URL("ws", location.href);
@@ -1348,7 +1349,25 @@ function connectWS() {
   const ws = new WebSocket(url);
   const ping = setInterval(() => ws.readyState === 1 && ws.send("ping"), 25000);
   ws.onmessage = e => onEvent(JSON.parse(e.data));
+  ws.onopen = () => {
+    // соединение рвалось (ноутбук спал, сервер перезапускался) — события за это время потеряны: перечитываем
+    if (wsWasOpen) resyncAfterReconnect();
+    wsWasOpen = true;
+  };
   ws.onclose = ev => { clearInterval(ping); if (ev.code !== 4401) setTimeout(connectWS, 3000); };
+}
+async function resyncAfterReconnect() {
+  try { await loadAccounts(); } catch { /* сервер ещё поднимается — список обновится по событиям */ }
+  reloadDialogsSoon();
+  const c = S.current;
+  if (!c) return;
+  try {
+    const msgs = await api(`${chatPath(c.account_id, c.id)}/messages?limit=40`);
+    if (S.current !== c) return;
+    const known = new Set(S.messages.map(m => m.id));
+    const fresh = msgs.filter(m => !known.has(m.id));
+    if (fresh.length) { S.messages = S.messages.concat(fresh).sort((x, y) => x.id - y.id); renderMessages(atBottom); }
+  } catch { /* чат перечитается при следующем открытии */ }
 }
 function onEvent(ev) {
   if (ev.type === "account") {

@@ -1,0 +1,42 @@
+# Проверки кода при каждом пуше и pull request: ruff, компиляция всех модулей, тесты панели, синтаксис JS.
+# Сборка программы — отдельно, в desktop.yml.
+name: Проверки
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: Системные библиотеки (QtCore из PyQt5 для opentele)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglib2.0-0 libgl1 libegl1
+      - name: Зависимости
+        run: pip install -r requirements-dev.txt
+      - name: ruff
+        run: ruff check .
+      - name: Компиляция
+        run: python -m compileall -q app bots desktop/*.py
+      - name: Синтаксис JS интерфейсов
+        run: |
+          node --check static/app.js
+          node --check bots/posts/web/static/app.js
+          node --check bots/ads/web_static/app.js
+      - name: Тесты
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q

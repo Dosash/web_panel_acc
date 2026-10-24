@@ -425,7 +425,7 @@ async def _download(bot: Any, item: dict, file_id: str, directory: Path, stem: s
     destination = directory / f"{stem}.{_extension(getattr(file, 'file_path', None), media_type)}"
     tmp = directory / f".{stem}.{uuid.uuid4().hex}.part"
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(directory.mkdir, parents=True, exist_ok=True)
         await _fetch_file(bot, file, tmp)
         if not tmp.is_file() or tmp.stat().st_size == 0:
             raise OSError("empty download")

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from html import escape
 
@@ -15,13 +16,12 @@ from bots.ads.channel_info import ChannelError, fetch_and_save, refresh_all
 from bots.ads.config import config
 from bots.ads.orders import notify_admins
 from bots.ads import slots
-from bots.ads.screen import nav, notify, remove_input, show
-from bots.ads.slots import fmt_ts
-from bots.ads.i18n import t
+from bots.ads.screen import nav, remove_input, show
 from bots.ads.prices import PRICE_HINT, Price, ch_price, fmt_price, fmt_rub, has_price, parse_price, price_setting
-from bots.ads.ui import (ADMIN_PAGE_SIZE, TEST_MODE_TEXT, AdmCb, MenuCb, OrdCb, admin_icon, channel_card, channel_deeplink, fmt_num,
+from bots.ads.ui import (ADMIN_PAGE_SIZE, TEST_MODE_TEXT, AdmCb, MenuCb, admin_icon, channel_card, channel_deeplink, fmt_num,
                     fmt_usd, home_btn, kb, order_summary, page_row, paginate)
 
+log = logging.getLogger(__name__)
 router = Router(name="admin")
 router.message.filter(F.from_user.id.in_(config.admin_ids))
 router.callback_query.filter(F.from_user.id.in_(config.admin_ids))
@@ -700,10 +700,13 @@ async def discovery_report_loop(bot: Bot, interval: int = 60) -> None:
         found = channel_info.take_found()
         if not found:
             continue
-        price = await db.default_price()
-        shown = "\n".join(f"• {escape(x)}" for x in found[:40]) + (f"\n… и ещё {len(found) - 40}" if len(found) > 40 else "")
-        await notify_admins(
-            bot,
-            f"🔎 Найдено и добавлено каналов: <b>{len(found)}</b> (цена {fmt_price(*price)})\n{shown}",
-            [[InlineKeyboardButton(text="📢 Каналы", callback_data=AdmCb(action="channels").pack())]],
-        )
+        try:
+            price = await db.default_price()
+            shown = "\n".join(f"• {escape(x)}" for x in found[:40]) + (f"\n… и ещё {len(found) - 40}" if len(found) > 40 else "")
+            await notify_admins(
+                bot,
+                f"🔎 Найдено и добавлено каналов: <b>{len(found)}</b> (цена {fmt_price(*price)})\n{shown}",
+                [[InlineKeyboardButton(text="📢 Каналы", callback_data=AdmCb(action="channels").pack())]],
+            )
+        except Exception:
+            log.exception("discovery report failed")
