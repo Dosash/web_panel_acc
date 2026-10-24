@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 if not getattr(sys, "frozen", False):
     sys.path[:0] = [str(HERE), str(HERE.parent)]  # app/ из корня репозитория
 
-import paths  # noqa: E402
+import paths
 
 log = logging.getLogger("desktop")
 

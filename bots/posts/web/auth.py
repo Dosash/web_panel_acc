@@ -290,7 +290,7 @@ async def _session_key(request: web.Request) -> str:
 
 def make_session_token(secret: str, password_hash: str, issued: int) -> str:
     signature = hmac.new(
-        secret.encode("utf-8"), f"{issued}:{password_hash}".encode("utf-8"), hashlib.sha256
+        secret.encode("utf-8"), f"{issued}:{password_hash}".encode(), hashlib.sha256
     ).hexdigest()
     return f"{issued}.{signature}"
 

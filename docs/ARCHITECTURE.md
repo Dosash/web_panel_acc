@@ -77,9 +77,13 @@ FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`
   `/accounts` без слэша перенаправляется на `/accounts/`. Интерфейс использует только относительные адреса.
 - `GET /api/health` — без входа, для `HEALTHCHECK` Docker и карточки в хабе панелей.
 - Обработчики исключений превращают `RPCError` Telethon в `400 {"detail": "Telegram: ..."}`,
-  «аккаунт не подключён» (`RuntimeError`) в `409`.
+  `NoAccount` в `404`, `NotConnected` («аккаунт не подключён») в `409`; отозванная на ходу сессия
+  (`AuthKeyUnregistered` и подобные) переводит аккаунт в статус `error`. Прочие `KeyError`/`RuntimeError` —
+  ошибка панели: журнал с трассировкой и `500`.
 - Кэш медиа: `data/cache/m_<aid>_<chat>_<msg>[_t].<ext>`, аватары `a_<aid>_<peer>.jpg`
-  (TTL сутки), отметка «фото нет» `a_<aid>_<peer>.none` (TTL сутки).
+  (TTL сутки), отметка «фото нет» `a_<aid>_<peer>.none` (TTL сутки). Уборка — `app/cache.py`: при старте и раз
+  в 6 часов удаляются медиа старше 7 дней и аватары старше 30, затем самые старые файлы до размера `CACHE_MAX_MB`;
+  `data/tmp/` чистится от папок старше часа.
 
 ### `app/bots.py` — встроенные боты
 Бот постинга (`bots/posts`, бывший post_channel_bot) и бот рекламы (`bots/ads`, бывший ads_chanel_bot) — aiogram 3

@@ -41,7 +41,7 @@ def make_icons() -> None:
     from PyQt5.QtSvg import QSvgRenderer
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    _app = QGuiApplication.instance() or QGuiApplication([])  # noqa: F841 — QPainter нужен QGuiApplication
+    _app = QGuiApplication.instance() or QGuiApplication([])
     ICONS.mkdir(parents=True, exist_ok=True)
     renderer = QSvgRenderer(str(HERE / "icon.svg"))
     pngs = {}

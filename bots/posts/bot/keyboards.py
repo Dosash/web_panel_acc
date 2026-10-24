@@ -139,7 +139,7 @@ def cancel_kb() -> InlineKeyboardMarkup:
 
 
 def helper_rows(usernames: list[str]) -> list[list[InlineKeyboardButton]]:
-    """«➕ @bot» link per helper bot: Telegram's «add as channel admin» screen (app.services.helper_bots)."""
+    """«➕ @bot» link per helper bot: Telegram's «add as channel admin» screen (bots.posts.services.helper_bots)."""
     return [[url_button(f"➕ @{name}"[:64], add_link(name))] for name in usernames]
 
 

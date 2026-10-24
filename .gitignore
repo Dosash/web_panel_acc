@@ -10,3 +10,5 @@ desktop/.venv/
 desktop/build/
 desktop/dist/
 desktop/release/
+.pytest_cache/
+.ruff_cache/

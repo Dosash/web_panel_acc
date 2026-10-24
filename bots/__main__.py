@@ -13,8 +13,11 @@ NAMES = ("posts", "ads")
 
 
 def _exit_with_parent() -> None:
+    # os.read, а не sys.stdin.buffer.read: буферизованный stdin держит замок, и когда бот выходит сам
+    # (неверный токен), интерпретатор при завершении не может его забрать — «Fatal Python error:
+    # _enter_buffered_busy» вместо обычного кода выхода
     try:
-        while sys.stdin.buffer.read(4096):
+        while os.read(0, 4096):
             pass
     except Exception:
         pass

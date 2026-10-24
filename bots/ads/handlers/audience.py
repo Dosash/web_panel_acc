@@ -1,5 +1,6 @@
 """Аудитория бота: кто пользуется ботом, кто его заблокировал, и приём поста для рассылки от админа."""
-from typing import Any, Awaitable, Callable
+from typing import Any
+from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatMemberStatus

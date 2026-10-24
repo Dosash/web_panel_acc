@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-VERSION = "0.12.0"
+VERSION = "0.12.1"
 
 
 def _env(name: str, old: str, default: str = "") -> str:
@@ -48,6 +48,8 @@ CACHE_DIR = DATA_DIR / "cache"
 TMP_DIR = DATA_DIR / "tmp"
 CACHE_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
+# Сколько держать в data/cache (медиа из чатов, аватары); 0 — без ограничения по размеру (app/cache.py)
+CACHE_MAX_MB = int(_env("CACHE_MAX_MB", "CACHE_MAX_MB", "2048") or 0)
 
 
 def _load_or_create(path: Path, factory) -> bytes:

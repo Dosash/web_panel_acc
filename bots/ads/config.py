@@ -1,7 +1,30 @@
+import logging
 import os
 from dataclasses import dataclass
 
 # Переменные окружения задаёт TG Panel при запуске бота (app/bots.py), .env панели не читаем
+
+log = logging.getLogger(__name__)
+
+
+def _env(name: str, default, parse):
+    """Переменная окружения через parse(); пустая или негодная — значение по умолчанию с предупреждением
+    (бот не должен падать на старте из-за опечатки в настройках)."""
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return default
+    try:
+        return parse(raw.strip())
+    except (ValueError, TypeError, IndexError):
+        log.warning("%s=%r не разобрано — используется %r", name, raw, default)
+        return default
+
+
+def _hours(s: str) -> tuple[int, int]:
+    a, b = (int(x) for x in s.split("-"))
+    if not 0 <= a <= b <= 23:
+        raise ValueError(s)
+    return a, b
 
 
 @dataclass
@@ -34,19 +57,20 @@ class Config:
 
 def load_config() -> Config:
     admins = list(int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x)
+    work_start, work_end = _env("WORK_HOURS", (9, 22), _hours)
     return Config(
         bot_token=os.getenv("BOT_TOKEN", "").strip(),
         cryptopay_token=os.getenv("CRYPTOPAY_TOKEN", ""),
         cryptopay_testnet=os.getenv("CRYPTOPAY_TESTNET", "false").lower() == "true",
         admin_ids=admins,
         db_path=os.getenv("DB_PATH", "data/bot.db"),
-        test_channel_id=int(os.getenv("TEST_CHANNEL_ID")) if os.getenv("TEST_CHANNEL_ID") else None,
+        test_channel_id=_env("TEST_CHANNEL_ID", None, int),
         cryptopay_test_token=os.getenv("CRYPTOPAY_TESTNET_TOKEN", ""),
         timezone=os.getenv("TIMEZONE", "Europe/Moscow"),
-        work_start=int(os.getenv("WORK_HOURS", "9-22").split("-")[0]),
-        work_end=int(os.getenv("WORK_HOURS", "9-22").split("-")[1]),
-        booking_days=int(os.getenv("BOOKING_DAYS", "14")),
-        min_lead_minutes=int(os.getenv("MIN_LEAD_MINUTES", "60")),
+        work_start=work_start,
+        work_end=work_end,
+        booking_days=_env("BOOKING_DAYS", 14, int),
+        min_lead_minutes=_env("MIN_LEAD_MINUTES", 60, int),
         xrocket_token=os.getenv("XROCKET_TOKEN", ""),
         xrocket_webhook_secret=os.getenv("XROCKET_WEBHOOK_TOKEN", "").strip(),
         xrocket_webhook_domain=os.getenv("XROCKET_WEBHOOK_DOMAIN", "").strip(),

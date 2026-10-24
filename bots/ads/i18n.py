@@ -334,6 +334,12 @@ S: dict[str, dict[str, str]] = {
               "Pick a new time — no re-moderation needed.",
     },
     "btn_pick_time": {"ru": "🕒 Выбрать время", "en": "🕒 Pick a time"},
+    "n_time_passed": {
+        "ru": "✅ Оплата заказа #{id} получена, но выбранное время <b>{t}</b> уже прошло.\n"
+              "Выберите новое время — повторная модерация не нужна.",
+        "en": "✅ Payment for order #{id} received, but the chosen time <b>{t}</b> has already passed.\n"
+              "Pick a new time — no re-moderation needed.",
+    },
     "n_scheduled": {"ru": "✅ Оплата заказа #{id} получена!\n⏰ Время забронировано, пост будет опубликован {t}.",
                     "en": "✅ Payment for order #{id} received!\n⏰ The slot is booked, the post will be published {t}."},
     "n_published": {"ru": "🎉 Заказ #{id} опубликован:\n", "en": "🎉 Order #{id} has been published:\n"},

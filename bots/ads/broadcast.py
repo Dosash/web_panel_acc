@@ -227,7 +227,7 @@ async def start_check(bot: Bot) -> None:
         raise BroadcastError("Проверка уже идёт")
     total = (await db.audience_stats())["users"]
     _check.update(running=True, done=0, total=total, blocked=0, finished_at=None)
-    asyncio.create_task(_run_check(bot))
+    _check["task"] = asyncio.create_task(_run_check(bot))   # ссылка — иначе задачу может собрать GC
 
 
 async def _run_check(bot: Bot) -> None:

@@ -202,7 +202,11 @@ function toast(text, err = false) {
   const t = $("#toast");
   t.innerHTML = `<span class="ti">${icon(err ? "alert" : "check")}</span><span>${esc(text)}</span>`;
   t.className = "toast" + (err ? " err" : ""); t.hidden = false;
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.hidden = true), err ? 6000 : 2800);
+  clearTimeout(toast.timer); clearTimeout(toast.hideTimer);
+  toast.timer = setTimeout(() => {
+    t.classList.add("out");
+    toast.hideTimer = setTimeout(() => { t.hidden = true; t.classList.remove("out"); }, 220);
+  }, err ? 6000 : 2800);
 }
 
 // navigator.clipboard есть только на https и localhost, а панель в локальной сети открыта по http —
@@ -379,11 +383,13 @@ async function loadDialogs() {
   const params = new URLSearchParams({ archived: S.folder === "archive", limit: 100 });
   if (S.scope !== "") params.set("account_id", S.scope);
   if (typeof S.folder === "number") params.set("folder_id", S.folder);
-  if (!S.dialogs.length) $("#dialog-list").innerHTML = skeletonDialogs();
+  const fresh = !S.dialogs.length;   // первая загрузка или смена вкладки — список появляется «лесенкой»
+  if (fresh) $("#dialog-list").innerHTML = skeletonDialogs();
   try {
     const list = await api(`api/dialogs?${params}`);
     if (req !== dialogsReq) return;
     S.dialogs = list;
+    S.animList = fresh;
     renderDialogs();
     renderRail();
   } catch (e) { if (req === dialogsReq) $("#dialog-list").innerHTML = emptyState("alert", e.message); }
@@ -416,11 +422,14 @@ function renderDialogs() {
   box.innerHTML = "";
   const frag = document.createDocumentFragment();
   const all = S.scope === "";
+  const animate = S.animList; S.animList = false;
+  let n = 0;
   for (const d of list) {
     const a = acc(d.account_id) || { color: "#888", name: "?" };
     const el = document.createElement("div");
     const active = S.current && key(S.current.account_id, S.current.id) === key(d.account_id, d.id);
-    el.className = "dialog" + (active ? " active" : "") + (d.unread ? " has-unread" : "");
+    el.className = "dialog" + (active ? " active" : "") + (d.unread ? " has-unread" : "") + (animate ? " in" : "");
+    if (animate) el.style.setProperty("--i", Math.min(n++, 14));
     el.style.setProperty("--c", a.color);
     el.dataset.key = key(d.account_id, d.id);
     el.appendChild(avatarEl(d.account_id, d.id, d.title, peerColor(d.id)));
@@ -1341,6 +1350,7 @@ function postEditor() {
 $("#post-btn").onclick = postEditor;
 
 // ---------- realtime ----------
+let wsWasOpen = false;
 function connectWS() {
   // адрес относительно страницы: панель может стоять не в корне сайта (WEB_PREFIX)
   const url = new URL("ws", location.href);
@@ -1348,7 +1358,25 @@ function connectWS() {
   const ws = new WebSocket(url);
   const ping = setInterval(() => ws.readyState === 1 && ws.send("ping"), 25000);
   ws.onmessage = e => onEvent(JSON.parse(e.data));
+  ws.onopen = () => {
+    // соединение рвалось (ноутбук спал, сервер перезапускался) — события за это время потеряны: перечитываем
+    if (wsWasOpen) resyncAfterReconnect();
+    wsWasOpen = true;
+  };
   ws.onclose = ev => { clearInterval(ping); if (ev.code !== 4401) setTimeout(connectWS, 3000); };
+}
+async function resyncAfterReconnect() {
+  try { await loadAccounts(); } catch { /* сервер ещё поднимается — список обновится по событиям */ }
+  reloadDialogsSoon();
+  const c = S.current;
+  if (!c) return;
+  try {
+    const msgs = await api(`${chatPath(c.account_id, c.id)}/messages?limit=40`);
+    if (S.current !== c) return;
+    const known = new Set(S.messages.map(m => m.id));
+    const fresh = msgs.filter(m => !known.has(m.id));
+    if (fresh.length) { S.messages = S.messages.concat(fresh).sort((x, y) => x.id - y.id); renderMessages(atBottom); }
+  } catch { /* чат перечитается при следующем открытии */ }
 }
 function onEvent(ev) {
   if (ev.type === "account") {
@@ -1416,16 +1444,26 @@ function modal(title, html, onMount) {
   $("#modal-body").innerHTML = html;
   $("#modal-body").removeAttribute("data-aid");   // с какого аккаунта открывать ссылки из окна — задаёт само окно
   hydrateIcons($("#modal-body"));
+  clearTimeout(modalCloseTimer);
+  $("#modal").classList.remove("closing");
   $("#modal").hidden = false;
   onMount?.($("#modal-body"));
 }
+let modalCloseTimer;
 function closeModal() {
   if (P) { savePostDraft(); if (P.fileUrl) URL.revokeObjectURL(P.fileUrl); P = null; }   // текст и кнопки поста остаются в черновике
-  $("#modal").hidden = true; $("#modal-body").innerHTML = "";
+  const m = $("#modal");
+  if (m.hidden) return;
+  m.classList.add("closing");   // окно уходит плавно; содержимое убираем после анимации
+  clearTimeout(modalCloseTimer);
+  modalCloseTimer = setTimeout(() => {
+    if (!m.classList.contains("closing")) return;   // за это время открыли другое окно
+    m.classList.remove("closing"); m.hidden = true; $("#modal-body").innerHTML = "";
+  }, 170);
 }
 $("#modal-close").onclick = closeModal;
 $("#modal").addEventListener("mousedown", e => { if (e.target.id === "modal") closeModal(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden) closeModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#modal").hidden && !$("#modal").classList.contains("closing")) closeModal(); });
 function formSubmit(root, handler) {
   const form = root.querySelector("form");
   form.addEventListener("submit", async e => {
@@ -2731,7 +2769,12 @@ function renderGhost() {
 }
 $("#toggle-ghost").onclick = () => { S.ghost = !S.ghost; writePref("ghost", S.ghost ? "1" : "0"); renderGhost(); toast(S.ghost ? "Невидимка включена" : "Невидимка выключена"); };
 function applyTheme(t) {
-  document.documentElement.dataset.theme = t;
+  const html = document.documentElement;
+  if (html.dataset.theme && html.dataset.theme !== t) {
+    html.classList.add("theming");
+    clearTimeout(applyTheme.timer); applyTheme.timer = setTimeout(() => html.classList.remove("theming"), 450);
+  }
+  html.dataset.theme = t;
   writePref("theme", t);
   writePref("panel-theme", t);   // тот же ключ читают панели встроенных ботов
   const frame = $("#bot-body .bot-frame");

@@ -24,6 +24,11 @@
 (() => {
   'use strict';
 
+  // Встроенный браузер Windows-программы TG Panel (Qt 5.15.2, Chromium 83) не знает replaceChildren
+  if (!Element.prototype.replaceChildren) {
+    Element.prototype.replaceChildren = function (...nodes) { this.textContent = ''; this.append(...nodes); };
+  }
+
   // ======================================================================= 1. Utilities
 
   const $ = (sel, root = document) => root.querySelector(sel);

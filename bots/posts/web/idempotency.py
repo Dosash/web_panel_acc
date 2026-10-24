@@ -208,7 +208,7 @@ def idempotent(handler: Handler, current_post: CurrentPost) -> Handler:
                 return await _still_running(request, entry, current_post)
             try:
                 await asyncio.wait_for(entry.done.wait(), remaining)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return await _still_running(request, entry, current_post)
             # Finished: replay it — or, when it left nothing behind, run this request.
 

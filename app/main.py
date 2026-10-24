@@ -1,12 +1,14 @@
 import asyncio
+import collections
 import json
 import logging
 import re
+import secrets
 import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -19,11 +21,13 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 from telethon import functions, types
-from telethon.errors import BotResponseTimeoutError, RPCError
+from telethon.errors import (AuthKeyInvalidError, AuthKeyUnregisteredError, BotResponseTimeoutError, RPCError,
+                             SessionExpiredError, SessionRevokedError, UserDeactivatedBanError, UserDeactivatedError)
 
-from . import bots, poster, storage, updates
+from . import bots, cache, poster, storage, updates
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
-from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type, username
+from .manager import (MUTE_FOREVER, Manager, NoAccount, NotConnected, dialog_dict, display_name, message_dict,
+                      parse_proxy, peer_type, username)
 from .tdata_import import ImportError_, convert, save_upload
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,14 +50,24 @@ async def lifespan(app: FastAPI):
         log.warning("WEB_PASSWORD пуст — панель открыта без пароля. Не выставляйте её в интернет.")
     log.info("TG Panel %s: путь %s", VERSION, (WEB_PREFIX or "") + "/")
     storage.init_db()
-    task = asyncio.create_task(manager.start_all())
+    tasks = [asyncio.create_task(manager.start_all(), name="accounts-start"),
+             asyncio.create_task(cache.run_forever(), name="cache-clean")]
+    for t in tasks:
+        t.add_done_callback(_log_task_failure)
     await bots.start_all()
     yield
-    task.cancel()
+    for t in tasks:
+        t.cancel()
     # боты и аккаунты — параллельно: программа для ПК ждёт остановку сервера недолго (desktop/server.py)
     await asyncio.gather(bots.stop_all(), manager.stop_all(), return_exceptions=True)
     await close_bot_proxy()
     await poster.close_all()
+
+
+def _log_task_failure(task: asyncio.Task) -> None:
+    """Фоновая задача упала — в журнал, а не молчаливое «Task exception was never retrieved»."""
+    if not task.cancelled() and task.exception() is not None:
+        log.error("Фоновая задача %s завершилась с ошибкой", task.get_name(), exc_info=task.exception())
 
 
 app = FastAPI(title="TG Panel", version=VERSION, lifespan=lifespan)
@@ -121,20 +135,45 @@ RPC_MESSAGES = {
 }
 
 
+# Telegram отверг ключ сессии уже работающего аккаунта: сеанс завершили с телефона, аккаунт удалён или заблокирован
+DEAD_SESSION = (AuthKeyUnregisteredError, AuthKeyInvalidError, SessionRevokedError, SessionExpiredError,
+                UserDeactivatedError, UserDeactivatedBanError)
+
+
 @app.exception_handler(RPCError)
-async def rpc_error(_: Request, e: RPCError):
+async def rpc_error(request: Request, e: RPCError):
     code = e.message or type(e).__name__
+    if isinstance(e, DEAD_SESSION):
+        aid = request.path_params.get("aid")
+        if aid is not None:
+            text = ("Аккаунт заблокирован Telegram" if isinstance(e, UserDeactivatedBanError)
+                    else "Сессия недействительна: сеанс завершён или аккаунт удалён")
+            await manager.mark_dead(int(aid), text)
+            return JSONResponse({"detail": text}, status_code=409)
     return JSONResponse({"detail": RPC_MESSAGES.get(code, f"Telegram: {code}")}, status_code=400)
 
 
-@app.exception_handler(RuntimeError)
-async def runtime_error(_: Request, e: RuntimeError):
+@app.exception_handler(NotConnected)
+async def not_connected(_: Request, e: NotConnected):
     return JSONResponse({"detail": str(e)}, status_code=409)
 
 
-@app.exception_handler(KeyError)
-async def key_error(_: Request, e: KeyError):
+@app.exception_handler(NoAccount)
+async def no_account(_: Request, e: NoAccount):
     return JSONResponse({"detail": f"Аккаунт {e} не найден"}, status_code=404)
+
+
+@app.exception_handler(RuntimeError)
+async def runtime_error(request: Request, e: RuntimeError):
+    # не NotConnected — значит, что-то сломалось в самой панели: в журнал с трассировкой, наружу — 500
+    log.exception("Ошибка в %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": f"Ошибка панели: {e}"}, status_code=500)
+
+
+@app.exception_handler(KeyError)
+async def key_error(request: Request, e: KeyError):
+    log.exception("Ошибка в %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": f"Ошибка панели: нет поля {e}"}, status_code=500)
 
 
 @app.exception_handler(bots.NoSuchBot)
@@ -170,11 +209,34 @@ class LoginIn(BaseModel):
     password: str
 
 
+# Подбор пароля: не больше LOGIN_ATTEMPTS неверных попыток за LOGIN_WINDOW секунд (на всю панель — за nginx
+# все запросы приходят с одного адреса, да и пользователь у панели один)
+LOGIN_ATTEMPTS = 10
+LOGIN_WINDOW = 10 * 60
+_login_failures: collections.deque = collections.deque()
+
+
+def login_blocked(now: float | None = None) -> int:
+    """0 — можно пробовать, иначе сколько секунд ждать."""
+    now = now or time.time()
+    while _login_failures and now - _login_failures[0] > LOGIN_WINDOW:
+        _login_failures.popleft()
+    if len(_login_failures) < LOGIN_ATTEMPTS:
+        return 0
+    return int(LOGIN_WINDOW - (now - _login_failures[0])) + 1
+
+
 @app.post("/api/login")
 async def login(body: LoginIn):
-    if body.password != WEB_PASSWORD:
+    wait = login_blocked()
+    if wait:
+        raise HTTPException(429, f"Слишком много попыток входа — подождите {max(1, wait // 60)} мин.",
+                            headers={"Retry-After": str(wait)})
+    if not secrets.compare_digest(body.password.encode(), WEB_PASSWORD.encode()):
+        _login_failures.append(time.time())
         await asyncio.sleep(1.5)  # замедляем подбор пароля
         raise HTTPException(401, "Неверный пароль")
+    _login_failures.clear()
     resp = JSONResponse({"ok": True})
     resp.set_cookie(COOKIE, signer.dumps("admin"), max_age=COOKIE_AGE, path=COOKIE_PATH,
                     httponly=True, samesite="strict")
@@ -199,7 +261,7 @@ async def health():
     states = [live.status for live in manager.live.values()]
     errors = states.count("error")
     return {"status": "degraded" if errors else "ok", "version": VERSION,
-            "accounts": len(storage.list_accounts()), "online": states.count("online"), "errors": errors,
+            "accounts": storage.count_accounts(), "online": states.count("online"), "errors": errors,
             "bots": {name: bot.status for name, bot in bots.bots.items() if bot.configured}}
 
 
@@ -380,7 +442,8 @@ async def reset_authorization(aid: int, auth_hash: str):
 @app.get("/api/dialogs", dependencies=A)
 async def dialogs(account_id: int | None = None, archived: bool = False, limit: int = 100,
                   folder_id: int | None = None):
-    online = [i for i, l in manager.live.items() if l.status == "online"]
+    limit = max(1, min(limit, 500))
+    online = [i for i, live in manager.live.items() if live.status == "online"]
 
     if folder_id is not None:
         # Папка панели: чаты из разных аккаунтов, грузим ровно их
@@ -855,7 +918,7 @@ async def send_post(aid: int, cid: int, data: str = Form(...), file: UploadFile 
     if body.schedule:
         if body.schedule < time.time() + 30:
             raise HTTPException(400, "Время публикации уже прошло")
-        schedule = datetime.fromtimestamp(body.schedule, timezone.utc)
+        schedule = datetime.fromtimestamp(body.schedule, UTC)
     client = manager.client(aid)
     sender, peer = client, await manager.entity(aid, cid)
     if reply_markup is not None:
@@ -999,16 +1062,25 @@ async def read_all(aid: int):
 @app.get("/api/accounts/{aid}/chats/{cid}/messages/{mid}/media", dependencies=A)
 async def message_media(aid: int, cid: int, mid: int, thumb: bool = False):
     prefix = f"m_{aid}_{cid}_{mid}{'_t' if thumb else ''}"
-    cached = next(CACHE_DIR.glob(prefix + ".*"), None) or next(CACHE_DIR.glob(prefix), None)
+
+    def find_cached() -> Path | None:
+        return next(CACHE_DIR.glob(prefix + ".*"), None) or next(CACHE_DIR.glob(prefix), None)
+
+    cached = find_cached()
     if cached is None:
-        client = manager.client(aid)
-        msg = await client.get_messages(await manager.entity(aid, cid), ids=mid)
-        if msg is None or msg.media is None:
-            raise HTTPException(404, "Медиа не найдено")
-        path = await client.download_media(msg, file=str(CACHE_DIR / prefix), thumb=-1 if thumb else None)
-        if not path:
-            raise HTTPException(404, "Медиа не найдено")
-        cached = Path(path)
+        # Не больше нескольких загрузок на аккаунт разом (flood wait); под замком — ещё раз в кэш:
+        # лента запрашивает одну и ту же картинку несколько раз подряд, качать её нужно один раз
+        async with manager.media_slot(aid):
+            cached = find_cached()
+            if cached is None:
+                client = manager.client(aid)
+                msg = await client.get_messages(await manager.entity(aid, cid), ids=mid)
+                if msg is None or msg.media is None:
+                    raise HTTPException(404, "Медиа не найдено")
+                path = await client.download_media(msg, file=str(CACHE_DIR / prefix), thumb=-1 if thumb else None)
+                if not path:
+                    raise HTTPException(404, "Медиа не найдено")
+                cached = Path(path)
     return FileResponse(cached, headers={"Cache-Control": "private, max-age=86400"})
 
 
@@ -1186,7 +1258,10 @@ def parse_tg_link(link: str) -> dict:
     """t.me/… и tg://… → что открыть: username (+ post, app, start, startapp), invite или channel_id."""
     u = urlparse(link if "://" in link else f"https://{link}")
     q = parse_qs(u.query, keep_blank_values=True)
-    one = lambda k: q[k][0] if k in q else None
+
+    def one(k: str) -> str | None:
+        return q[k][0] if k in q else None
+
     if u.scheme == "tg":
         if u.netloc == "join" and one("invite"):
             return {"invite": one("invite")}

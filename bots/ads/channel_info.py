@@ -40,7 +40,7 @@ async def fetch_avg_views(username: str) -> int | None:
                 if r.status != 200:
                     return None
                 html = await r.text()
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+    except (TimeoutError, aiohttp.ClientError) as e:
         log.warning("views fetch failed for %s: %s", username, e)
         return None
     views = [parse_count(v) for v in VIEWS_RE.findall(html)]
