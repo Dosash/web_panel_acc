@@ -71,6 +71,14 @@ data/              база, ключи, кэш (в .gitignore)
 | `--accent`, `--accent-2`, `--grad`, `--accent-soft` | Акцент: синий → голубой, градиент, мягкий фон |
 | `--danger`, `--ok`, `--warn` | Статусы |
 | `--r-lg`, `--r-md`, `--r-sm` | Радиусы |
+| `--surface-glass`, `--bubble-glass` | Полупрозрачные поверхности под `backdrop-filter` (шапка чата, композер, кнопки под постами) — вместо `color-mix()` |
+| `--edge` | Блик по верхней кромке панелей и окон (`inset 0 1px 0`) |
+| `--glow`, `--ring` | Свечение активных элементов и цвет кольца фокуса |
+| `--ease`, `--spring` | Кривые анимаций: мягкая остановка и лёгкий «перелёт» (появление окон, кнопки) |
+
+Анимации: `rise` (появление снизу), `modal-in`/`modal-out`, `msg-in`, `toast-in`/`toast-out`, `float`, `drift` — все в конце
+`app.css`; `prefers-reduced-motion` отключает их целиком. Список чатов появляется «лесенкой» (`.dialog.in` с `--i`)
+только при первой загрузке и смене вкладки; смена темы перетекает через класс `html.theming` (ставит `applyTheme`).
 
 Компоненты: `.btn` (`.primary`, `.danger`, `.block`), `.icon-btn` (`.sm`), `.badge`, `.chip` (цвет
 через `--c`), `.avatar` (`.xs/.sm/.lg`), `.segmented`, `.tile`, `.menu-list`, `.form`, `.drop`,
