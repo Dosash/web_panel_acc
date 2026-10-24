@@ -79,6 +79,9 @@ data/              база, ключи, кэш (в .gitignore)
 Анимации: `rise` (появление снизу), `modal-in`/`modal-out`, `msg-in`, `toast-in`/`toast-out`, `float`, `drift` — все в конце
 `app.css`; `prefers-reduced-motion` отключает их целиком. Список чатов появляется «лесенкой» (`.dialog.in` с `--i`)
 только при первой загрузке и смене вкладки; смена темы перетекает через класс `html.theming` (ставит `applyTheme`).
+Панели ботов получают то же оформление из `static/bots-theme.css` (подключается в их страницах последним):
+токены и правила под их классы (`.nav-item`, `.card`, `.btn-primary`/`.btn.primary`, `dialog.modal`/`.modal-back`,
+`.toast`, `.login-screen`); стили самих ботов не меняем.
 
 Компоненты: `.btn` (`.primary`, `.danger`, `.block`), `.icon-btn` (`.sm`), `.badge`, `.chip` (цвет
 через `--c`), `.avatar` (`.xs/.sm/.lg`), `.segmented`, `.tile`, `.menu-list`, `.form`, `.drop`,
