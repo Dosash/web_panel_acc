@@ -2533,7 +2533,7 @@ function supportModal() {
     <div class="support-links">${SUPPORT_LINKS.map(([url, ic, title, sub, color]) =>
       link(url, `<span class="si" style="--c:${color}">${icon(ic)}</span><span><b>${title}</b><span class="small muted">${sub}</span></span>${icon("external")}`, "support-link")).join("")}</div>`);
 }
-$("#support").onclick = supportModal;
+$("#support").onclick = $("#rail-version").onclick = supportModal;
 
 // ---------- обновления ----------
 // Сервер раз в 6 часов смотрит последний релиз на GitHub. Значок справа внизу — когда новее панель на
@@ -2928,6 +2928,8 @@ async function start() {
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
   S.version = sess.version || "";
+  $("#rail-version").textContent = S.version ? "v" + S.version : "";
+  $("#rail-version").hidden = !S.version;
   await Promise.all([loadAccounts(), loadFolders(), loadBots()]);
   // #bot=posts|ads — сразу открыть бота (сюда ведут старые адреса /posts/ и /ads/)
   const want = /^#bot=(\w+)$/.exec(location.hash)?.[1];
