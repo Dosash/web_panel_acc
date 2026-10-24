@@ -222,7 +222,8 @@ def _pyrogram_sqlite(tmp_path: Path, key: bytes, **over) -> bytes:
                     "date INTEGER, user_id INTEGER, is_bot INTEGER); CREATE TABLE version (number INTEGER);")
     row = {"dc_id": 4, "api_id": 2040, "test_mode": 0, "auth_key": key, "date": 1, "user_id": 777, "is_bot": 0, **over}
     c.execute("INSERT INTO sessions VALUES (:dc_id, :api_id, :test_mode, :auth_key, :date, :user_id, :is_bot)", row)
-    c.commit(); c.close()
+    c.commit()
+    c.close()
     return path.read_bytes()
 
 
@@ -265,7 +266,9 @@ def test_parse_telethon_string_session():
     from app import session_import as si
 
     key = bytes(range(256))
-    s = StringSession(); s.set_dc(1, "149.154.175.53", 443); s.auth_key = AuthKey(key)
+    s = StringSession()
+    s.set_dc(1, "149.154.175.53", 443)
+    s.auth_key = AuthKey(key)
     sess = si.parse_session("x.session", StringSession.save(s).encode())
     assert sess.dc_id == 1 and sess.auth_key == key
 
@@ -333,7 +336,8 @@ def test_pair_files_by_stem(tmp_path):
     # один json на единственную сессию подходит и при разных именах; zip раскрывается
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("acc/one.session", tele); zf.writestr("acc/params.json", b'{"phone": "1"}')
+        zf.writestr("acc/one.session", tele)
+        zf.writestr("acc/params.json", b'{"phone": "1"}')
         zf.writestr("acc/cache/big.bin", b"x")
     bundles = si.pair_files(si.expand_zips([("pack.zip", buf.getvalue())]))
     assert len(bundles) == 1 and bundles[0].meta.label == "+1"
