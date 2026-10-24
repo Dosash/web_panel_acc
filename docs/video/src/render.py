@@ -8,7 +8,16 @@
 Нужны: /usr/bin/chromium (или --chromium), ffmpeg. Полный рендер — около 10 минут.
 Результат кладётся в docs/video/demo.mp4; app.css и icons.js копируются из static/ при каждом запуске.
 """
-import argparse, base64, functools, http.server, os, shutil, socketserver, subprocess, sys, time
+import argparse
+import base64
+import functools
+import http.server
+import os
+import shutil
+import socketserver
+import subprocess
+import sys
+import time
 
 from playwright.sync_api import sync_playwright
 
