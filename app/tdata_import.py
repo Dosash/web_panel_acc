@@ -34,7 +34,8 @@ def _wanted(rel: Path, size: int | None = None) -> bool:
 
 def _safe_rel(name: str) -> Path | None:
     rel = Path(name.replace("\\", "/"))
-    if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+    # anchor — ещё и «/etc» и «C:x» под Windows: они не is_absolute(), но выводят из папки загрузки
+    if rel.is_absolute() or rel.anchor or ".." in rel.parts or not rel.parts:
         return None
     return rel
 

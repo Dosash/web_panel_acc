@@ -5,6 +5,11 @@
 импорт из tdata, общий список чатов, папки, каналы и группы, мини-приложения ботов, профиль, сеансы и т.д.
 Новые функции панели попадают в программу при следующей сборке — ничего дублировать не нужно.
 
+> **Windows** собирается не отсюда, а из [desktop-win/](../desktop-win/README.md): оболочка на Tauri 2 + WebView2
+> вместо PyQt5 + Qt WebEngine (быстрее и в разы меньше), с тем же `desktop.ini`, теми же файлами релиза и
+> установщиком с тем же AppId — программы на PyQt5 обновляются на неё сами. Эта папка — Linux и macOS
+> (и запуск из исходников на любой системе).
+
 | Система | Файл | Как установить |
 |---|---|---|
 | Windows 10/11 x64 | `TG-Panel-<версия>-windows-x64-setup.exe` | запустить установщик (права администратора не нужны) |
@@ -105,8 +110,10 @@
 
 Собирать нужно на той системе, под которую нужна программа (PyInstaller не собирает «крест-накрест»).
 Под все три системы сразу программу собирает GitHub Actions — `.github/workflows/desktop.yml`: на каждую
-правку в `desktop/`, `app/`, `static/`, `requirements.txt` (файлы — в артефактах запуска), а при новой версии
-в `main` или теге `v*` — ещё и релиз. Можно запустить и вручную: Actions → «Десктоп-приложение» → Run workflow.
+правку в `desktop/`, `desktop-win/`, `app/`, `static/`, `requirements.txt` (файлы — в артефактах запуска), а при
+новой версии в `main` или теге `v*` — ещё и релиз. Можно запустить и вручную: Actions → «Десктоп-приложение» →
+Run workflow. Windows-задача собирает программу из `desktop-win/` (`desktop-win\build.ps1`, см.
+[desktop-win/README.md](../desktop-win/README.md)), Linux и macOS — из этой папки.
 
 Локально — Python **3.12**:
 
@@ -117,16 +124,12 @@ desktop/.venv/bin/pip install -r desktop/requirements.txt
 desktop/.venv/bin/python desktop/build.py
 ```
 
-```bat
-:: Windows
-py -3.12 -m venv desktop\.venv
-desktop\.venv\Scripts\pip install -r desktop\requirements.txt
-desktop\.venv\Scripts\python desktop\build.py
-```
+Под Windows — `powershell -ExecutionPolicy Bypass -File desktop-win\build.ps1` (Rust, Tauri CLI, Python 3.12,
+Inno Setup 6). `desktop/build.py` под Windows по-прежнему собирает прежнюю программу на PyQt5, но в релиз она
+больше не идёт.
 
-Результат — в `desktop/release/`. Установщик Windows собирается, если установлен
-[Inno Setup 6](https://jrsoftware.org/isdl.php); AppImage — если есть `appimagetool` (или путь к нему
-в переменной `APPIMAGETOOL`). Без них получаются только архивы.
+Результат — в `desktop/release/`. AppImage собирается, если есть `appimagetool` (или путь к нему
+в переменной `APPIMAGETOOL`). Без него получается только архив.
 
 Запуск из исходников без сборки: `desktop/.venv/bin/python desktop/launcher.py`
 (флаг `--hidden` — сразу в трей).
@@ -156,7 +159,7 @@ launcher.py ── окружение для app.config (DATA_DIR, WEB_HOST=127.
 | `build.py` | значки, PyInstaller, упаковка под текущую ОС |
 | `packaging/` | ярлык и установка для Linux, AppImage, установщик Inno Setup |
 
-Встроенный браузер — Qt WebEngine из PyQt5: PyQt5 уже нужен opentele для чтения tdata, поэтому
-отдельный движок (Electron и т.п.) не тянем. Код панели (`app/`, `static/`) программа не меняет: всё
+Встроенный браузер (Linux, macOS) — Qt WebEngine из PyQt5: PyQt5 уже нужен opentele для чтения tdata, поэтому
+отдельный движок (Electron и т.п.) не тянем. Под Windows — системный WebView2 (см. `desktop-win/`). Код панели (`app/`, `static/`) программа не меняет: всё
 отличие — в небольшом скрипте, который `shell.py` встраивает в страницу (скрыть «Выйти из панели»
 и считать окно без фокуса «скрытым» для уведомлений).

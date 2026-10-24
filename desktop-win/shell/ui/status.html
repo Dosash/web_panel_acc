@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>TG Panel</title>
+<!-- Экран до загрузки панели: «Запуск…», «Сервер панели недоступен», ошибки. Цвета — как у тёмной темы панели
+     (status_html в desktop/shell.py). Оболочка подставляет __STATUS__ и открывает страницу через NavigateToString. -->
+<style>
+  :root { --bg: #0b1220; --text: #e6ebf5; --muted: #8b98b3; --track: #1f2b44; --accent: #4f8cff; --btn: #141f36;
+    --border: rgb(148 163 184 / .18); }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: grid; place-items: center; text-align: center; user-select: none; }
+  .box { max-width: 560px; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 16px 0 6px; }
+  p { color: var(--muted); margin: 0; white-space: pre-wrap; word-break: break-word; user-select: text; }
+  .spin { width: 36px; height: 36px; margin: auto; border-radius: 50%; border: 3px solid var(--track);
+    border-top-color: var(--accent); animation: r .9s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+  button { font: inherit; font-size: 14px; color: var(--text); background: var(--btn); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 16px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  button:hover { filter: brightness(1.12); }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="spin" id="spin"></div>
+  <h1 id="title"></h1>
+  <p id="text"></p>
+  <div class="actions" id="actions"></div>
+</div>
+<script>
+  const S = __STATUS__;
+  document.getElementById("title").textContent = S.title;
+  document.getElementById("text").textContent = S.text || "";
+  if (!S.spinner) document.getElementById("spin").remove();
+  for (const [action, label, primary] of S.actions || []) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (primary) b.className = "primary";
+    b.onclick = () => window.chrome.webview.postMessage("tg-desktop:" + JSON.stringify({ type: "status", action }));
+    document.getElementById("actions").appendChild(b);
+  }
+  document.addEventListener("contextmenu", e => e.preventDefault());
+</script>
+</body>
+</html>

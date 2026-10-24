@@ -13,7 +13,10 @@
 - Адреса в `static/` — только относительные (`api/...`, `ws`): панель может стоять под путём `WEB_PREFIX`.
 - `bots/posts`, `bots/ads` — встроенные бот постинга и бот рекламы (бывшие post_channel_bot, ads_chanel_bot):
   отдельные процессы, их запускает и проксирует `app/bots.py`. Импорты внутри — `bots.posts.…`/`bots.ads.…`.
-- `desktop/` — программа для Windows/Linux/macOS (PyQt5 WebEngine + тот же `app/`), см. `desktop/README.md`.
+- `desktop/` — программа для Linux/macOS (PyQt5 WebEngine + тот же `app/`), см. `desktop/README.md`.
+  `desktop-win/` — программа для Windows: оболочка Tauri 2 + WebView2 (Rust) и серверная часть отдельным процессом
+  (PyInstaller, из Qt только QtCore), см. `desktop-win/README.md`; сборка — `desktop-win\build.ps1`.
   Выпуск: повысить `VERSION` в `app/config.py` + раздел в `CHANGELOG.md` → после merge в main CI публикует
-  релиз под все ОС, установленные программы обновляются сами.
-  Новый модуль, который `app/` грузит по имени, может понадобиться в `hiddenimports` в `desktop/tg-panel.spec`.
+  релиз под все ОС (+ `TG-Panel-<версия>-SHA256SUMS.txt`), установленные программы обновляются сами.
+  Новый модуль, который `app/` грузит по имени, может понадобиться в `hiddenimports` в `desktop/tg-panel.spec`
+  и `desktop-win/server/tg-panel-server.spec`.
