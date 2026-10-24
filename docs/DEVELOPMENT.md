@@ -28,6 +28,7 @@ app/
   config.py        настройки из .env, ключи в data/
   storage.py       SQLite + шифрование сессий
   tdata_import.py  tdata → StringSession (opentele)
+  session_import.py .session/.json (Telethon, Pyrogram) → StringSession
   manager.py       клиенты Telethon, события, сериализация
   main.py          FastAPI: REST, WebSocket, статика
 static/

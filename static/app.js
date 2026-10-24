@@ -1447,7 +1447,31 @@ function modal(title, html, onMount) {
   clearTimeout(modalCloseTimer);
   $("#modal").classList.remove("closing");
   $("#modal").hidden = false;
+  $("#modal-body").querySelectorAll(".segmented").forEach(b => segmentedPill(b, $("#modal-body")));   // окно уже видно — размеры есть
   onMount?.($("#modal-body"));
+}
+// Переключатель .segmented: подложка активного сегмента — отдельный «бегунок», который плавно переезжает
+// к нажатой кнопке. Сам следит за сменой .active и за появлением из hidden (пока переключатель скрыт,
+// размеры нулевые — ставим, как только покажется): MutationObserver на scope (обычно окно целиком)
+function segmentedPill(box, scope = box) {
+  if (box.querySelector(":scope > .seg-pill")) return;
+  const pill = document.createElement("span");
+  pill.className = "seg-pill";
+  box.prepend(pill);
+  box.classList.add("has-pill");
+  let placed = false;
+  const place = () => {
+    const a = box.querySelector(".seg.active");
+    if (!a || !box.offsetWidth) { pill.style.opacity = "0"; placed = false; return; }
+    if (!placed) pill.classList.add("still");   // первый раз — без анимации, иначе бегунок «приезжает» из угла
+    pill.style.opacity = "1";
+    pill.style.width = a.offsetWidth + "px";
+    pill.style.transform = `translateX(${a.offsetLeft}px)`;
+    if (!placed) { void pill.offsetWidth; pill.classList.remove("still"); placed = true; }
+  };
+  new MutationObserver(place).observe(scope, { subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
+  if (window.ResizeObserver) new ResizeObserver(place).observe(box);
+  place();
 }
 let modalCloseTimer;
 function closeModal() {
@@ -1485,64 +1509,121 @@ function skipTdataFile(path, size) {
 }
 $("#add-account").onclick = () => modal("Новый аккаунт", `
   <form class="form">
+    <div class="segmented" id="src-mode">
+      <button type="button" class="seg active" data-mode="tdata">${icon("folder")}Папка tdata</button>
+      <button type="button" class="seg" data-mode="session">${icon("file")}Файлы .session</button>
+    </div>
     <label>Имя в панели<input name="name" required placeholder="Например: Продажи 1" autocomplete="off"></label>
     <div class="drop" id="drop">
       <span class="drop-ico" data-icon="folder"></span>
       <div><b>Выберите папку tdata</b></div>
       <div class="small">или перетащите сюда zip-архив с ней</div>
     </div>
-    <div class="row">
+    <div class="row" data-for="tdata">
       <label class="btn">${icon("folder")} Папка<input type="file" id="pick-folder" webkitdirectory hidden></label>
       <label class="btn">${icon("zip")} ZIP-архив<input type="file" id="pick-zip" accept=".zip" hidden></label>
     </div>
+    <div class="row" data-for="session" hidden>
+      <label class="btn">${icon("file")} Выбрать файлы<input type="file" id="pick-session" accept=".session,.json,.txt,.zip" multiple hidden></label>
+    </div>
+    <p class="muted small" data-for="session" hidden style="margin:-6px 0 0">Подходят <b>.session</b> Telethon или Pyrogram и строковые сессии.
+      Рядом положите <b>.json</b> с тем же именем — из него берутся api_id, устройство, 2FA и прокси. Можно загрузить сразу несколько аккаунтов или zip с ними.</p>
     <label class="check"><input type="checkbox" name="new_session" value="true" checked>
-      <span>Отдельный сеанс <span class="small">Панель войдёт как новое устройство, а tdata продолжит работать независимо. Рекомендуется.</span></span></label>
+      <span>Отдельный сеанс <span class="small" id="new-session-hint">Панель войдёт как новое устройство, а tdata продолжит работать независимо. Рекомендуется.</span></span></label>
     <label id="pwd-2fa">Облачный пароль (2FA)<input name="password_2fa" type="password" placeholder="если включён" autocomplete="off"></label>
-    <label>Локальный код-пароль Telegram Desktop<input name="passcode" type="password" placeholder="если установлен" autocomplete="off"></label>
+    <label data-for="tdata">Локальный код-пароль Telegram Desktop<input name="passcode" type="password" placeholder="если установлен" autocomplete="off"></label>
     <label>Прокси<input name="proxy" placeholder="socks5://user:pass@host:port — необязательно" autocomplete="off"></label>
     <div class="error"></div>
     <button class="btn primary block" type="submit">Подключить аккаунт</button>
   </form>`, root => {
-  let files = [];
-  const drop = root.querySelector("#drop");
+  let files = [], mode = "tdata";
+  const drop = root.querySelector("#drop"), nameInput = root.querySelector("[name=name]");
+  const isSessionFile = f => /\.(session|json|txt|zip)$/i.test(f.name);
   const setFiles = (list, label) => {
     files = list;
     drop.classList.toggle("has", files.length > 0);
     drop.innerHTML = files.length
       ? `<span class="drop-ico">${icon("check")}</span><div><b>${esc(label)}</b></div><div class="small">${files.length} файл(ов) будет загружено</div>`
-      : `<span class="drop-ico">${icon("alert")}</span><div><b>Файлы tdata не найдены</b></div>`;
+      : `<span class="drop-ico">${icon("alert")}</span><div><b>${mode === "tdata" ? "Файлы tdata не найдены" : "Файлы сессий не найдены"}</b></div>`;
   };
+  const resetDrop = () => {
+    files = []; drop.classList.remove("has");
+    drop.innerHTML = mode === "tdata"
+      ? `<span class="drop-ico">${icon("folder")}</span><div><b>Выберите папку tdata</b></div><div class="small">или перетащите сюда zip-архив с ней</div>`
+      : `<span class="drop-ico">${icon("file")}</span><div><b>Выберите файлы .session и .json</b></div><div class="small">или перетащите их сюда</div>`;
+  };
+  const setMode = m => {
+    mode = m;
+    root.querySelectorAll("#src-mode .seg").forEach(b => b.classList.toggle("active", b.dataset.mode === m));
+    root.querySelectorAll("[data-for]").forEach(el => (el.hidden = el.dataset.for !== m));
+    nameInput.required = m === "tdata";
+    nameInput.placeholder = m === "tdata" ? "Например: Продажи 1" : "Если пусто — имя или телефон из .json";
+    const ns = root.querySelector("[name=new_session]");
+    ns.checked = m === "tdata";
+    root.querySelector("#pwd-2fa").hidden = !ns.checked;
+    root.querySelector("#new-session-hint").textContent = m === "tdata"
+      ? "Панель войдёт как новое устройство, а tdata продолжит работать независимо. Рекомендуется."
+      : "Панель войдёт как новое устройство, а файл сессии останется рабочим. Без галочки используется ключ из файла.";
+    root.querySelector("[type=submit]").textContent = m === "tdata" ? "Подключить аккаунт" : "Подключить аккаунты";
+    resetDrop();
+  };
+  root.querySelectorAll("#src-mode .seg").forEach(b => (b.onclick = () => setMode(b.dataset.mode)));
   root.querySelector("#pick-folder").onchange = e => {
     const all = [...e.target.files];
     const kept = all.filter(f => !skipTdataFile(f.webkitRelativePath, f.size)).map(f => [f, f.webkitRelativePath]);
     setFiles(kept, `Папка «${all[0]?.webkitRelativePath.split("/")[0] || ""}»`);
   };
   root.querySelector("#pick-zip").onchange = e => { const f = e.target.files[0]; if (f) setFiles([[f, f.name]], f.name); };
-  drop.onclick = () => root.querySelector("#pick-folder").click();
+  const pickSessions = list => {
+    const kept = list.filter(isSessionFile).map(f => [f, f.name]);
+    const sessions = kept.filter(([f]) => !/\.json$/i.test(f.name)).length;
+    setFiles(kept, sessions === 1 ? kept.find(([f]) => !/\.json$/i.test(f.name))[0].name : `${sessions} сессий`);
+  };
+  root.querySelector("#pick-session").onchange = e => pickSessions([...e.target.files]);
+  drop.onclick = () => root.querySelector(mode === "tdata" ? "#pick-folder" : "#pick-session").click();
   drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
   drop.ondragleave = () => drop.classList.remove("over");
   drop.ondrop = e => {
     e.preventDefault(); drop.classList.remove("over");
-    const f = [...e.dataTransfer.files].find(x => x.name.toLowerCase().endsWith(".zip"));
+    const dropped = [...e.dataTransfer.files];
+    if (mode === "session") { pickSessions(dropped); return; }
+    const f = dropped.find(x => x.name.toLowerCase().endsWith(".zip"));
     if (f) setFiles([[f, f.name]], f.name); else toast("Перетащите zip-архив или выберите папку кнопкой", true);
   };
   root.querySelector("[name=new_session]").onchange = e => (root.querySelector("#pwd-2fa").hidden = !e.target.checked);
-  root.querySelector("[name=name]").focus();
+  nameInput.focus();
   formSubmit(root, async (fd, form) => {
-    if (!files.length) throw new Error("Выберите папку tdata или zip-архив");
+    if (!files.length) throw new Error(mode === "tdata" ? "Выберите папку tdata или zip-архив" : "Выберите файлы .session (и .json к ним)");
     const send = new FormData();
     for (const k of ["name", "passcode", "password_2fa", "proxy"]) send.append(k, fd.get(k) || "");
     send.append("new_session", fd.get("new_session") ? "true" : "false");
     for (const [f, path] of files) send.append("files", f, path);
-    const btn = form.querySelector("[type=submit]");
+    const btn = form.querySelector("[type=submit]"), label = btn.textContent;
     btn.textContent = "Подключение к Telegram…";
     try {
-      const a = await api("api/accounts/import", { method: "POST", form: send });
-      S.accounts.set(a.id, a);
-      closeModal();
-      toast(a.updated ? `Сессия аккаунта «${a.name}» обновлена` : `Аккаунт «${a.name}» подключён`);
-      setScope(a.id);
-    } finally { btn.textContent = "Подключить аккаунт"; }
+      if (mode === "tdata") {
+        const a = await api("api/accounts/import", { method: "POST", form: send });
+        S.accounts.set(a.id, a);
+        closeModal();
+        toast(a.updated ? `Сессия аккаунта «${a.name}» обновлена` : `Аккаунт «${a.name}» подключён`);
+        setScope(a.id);
+        return;
+      }
+      const r = await api("api/accounts/import-sessions", { method: "POST", form: send });
+      for (const a of r.accounts) S.accounts.set(a.id, a);
+      if (r.accounts.length === 1 && !r.errors.length) {
+        const a = r.accounts[0];
+        closeModal();
+        toast(a.updated ? `Сессия аккаунта «${a.name}» обновлена` : `Аккаунт «${a.name}» подключён`);
+        setScope(a.id);
+        return;
+      }
+      toast(`Подключено аккаунтов: ${r.accounts.length}`);
+      if (!r.errors.length) { closeModal(); return; }
+      // Часть файлов не подошла — окно остаётся открытым, чтобы ошибки можно было прочитать
+      form.querySelector(".error").textContent = "Не подключены: " + r.errors.map(e => e.error).join(" · ");
+      resetDrop();
+    } finally { btn.textContent = label; }
   });
 });
 

@@ -197,3 +197,147 @@ def test_clean_tmp(tmp_path, monkeypatch):
     fresh.mkdir()
     assert cache.clean_tmp() == 1
     assert not old.exists() and fresh.exists()
+
+
+# ---------- импорт из файлов сессии ----------
+
+def _telethon_sqlite(tmp_path: Path, key: bytes) -> bytes:
+    from telethon.crypto import AuthKey
+    from telethon.sessions import SQLiteSession
+
+    s = SQLiteSession(str(tmp_path / "t"))
+    s.set_dc(2, "149.154.167.51", 443)
+    s.auth_key = AuthKey(key)
+    s.close()
+    return (tmp_path / "t.session").read_bytes()
+
+
+def _pyrogram_sqlite(tmp_path: Path, key: bytes, **over) -> bytes:
+    import sqlite3
+
+    path = tmp_path / f"p{len(over)}{sum(over.values())}.session"
+    path.unlink(missing_ok=True)
+    c = sqlite3.connect(path)
+    c.executescript("CREATE TABLE sessions (dc_id INTEGER, api_id INTEGER, test_mode INTEGER, auth_key BLOB, "
+                    "date INTEGER, user_id INTEGER, is_bot INTEGER); CREATE TABLE version (number INTEGER);")
+    row = {"dc_id": 4, "api_id": 2040, "test_mode": 0, "auth_key": key, "date": 1, "user_id": 777, "is_bot": 0, **over}
+    c.execute("INSERT INTO sessions VALUES (:dc_id, :api_id, :test_mode, :auth_key, :date, :user_id, :is_bot)", row)
+    c.commit(); c.close()
+    return path.read_bytes()
+
+
+def test_parse_telethon_sqlite(tmp_path):
+    from app import session_import as si
+
+    key = bytes(range(256))
+    sess = si.parse_session("1_telethon.session", _telethon_sqlite(tmp_path, key))
+    assert (sess.dc_id, sess.address, sess.port, sess.auth_key) == (2, "149.154.167.51", 443, key)
+    restored = si.to_string_session(sess)
+    from telethon.sessions import StringSession
+    back = StringSession(restored)
+    assert back.dc_id == 2 and back.auth_key.key == key
+
+
+def test_parse_pyrogram_sqlite_and_string(tmp_path):
+    import base64
+    import struct
+
+    from app import session_import as si
+
+    key = bytes([7]) * 256
+    sess = si.parse_session("1_pyrogram.session", _pyrogram_sqlite(tmp_path, key))
+    assert (sess.dc_id, sess.address, sess.user_id, sess.auth_key) == (4, "149.154.167.91", 777, key)
+    with pytest.raises(si.ImportError_, match="бота"):
+        si.parse_session("b.session", _pyrogram_sqlite(tmp_path, key, is_bot=1))
+    with pytest.raises(si.ImportError_, match="тестовых"):
+        si.parse_session("t.session", _pyrogram_sqlite(tmp_path, key, test_mode=1))
+    # строковая сессия Pyrogram v2
+    raw = struct.pack(">BI?256sQ?", 5, 2040, False, key, 123, False)
+    text = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    sess = si.parse_session("s.session", text.encode())
+    assert (sess.dc_id, sess.address, sess.user_id) == (5, "91.108.56.130", 123)
+
+
+def test_parse_telethon_string_session():
+    from telethon.crypto import AuthKey
+    from telethon.sessions import StringSession
+
+    from app import session_import as si
+
+    key = bytes(range(256))
+    s = StringSession(); s.set_dc(1, "149.154.175.53", 443); s.auth_key = AuthKey(key)
+    sess = si.parse_session("x.session", StringSession.save(s).encode())
+    assert sess.dc_id == 1 and sess.auth_key == key
+
+
+def test_parse_session_rejects_garbage(tmp_path):
+    import sqlite3
+
+    from app import session_import as si
+
+    with pytest.raises(si.ImportError_):
+        si.parse_session("a.session", b"hello world")
+    path = tmp_path / "x.session"
+    sqlite3.connect(path).executescript("CREATE TABLE other (a);")
+    with pytest.raises(si.ImportError_, match="sessions"):
+        si.parse_session("x.session", path.read_bytes())
+
+
+def test_parse_json_teleraptor_format():
+    import json
+
+    from app import session_import as si
+
+    meta = si.parse_json("1.json", json.dumps({
+        "app_id": 2040, "app_hash": "b18441a1ff607e10a989891a5462e627", "device": "Z68A-D3-B3",
+        "sdk": "Windows 11 x64", "app_version": "7.2.9 x64", "system_lang_pack": "en-US", "lang_pack": "en",
+        "twoFA": "secret", "proxy": ["socks5", "1.2.3.4", 1080, True, "u", "p"],
+        "phone": "15550001234", "first_name": "Demo", "last_name": "User",
+    }).encode())
+    assert meta.api == {
+        "api_id": 2040, "api_hash": "b18441a1ff607e10a989891a5462e627", "device_model": "Z68A-D3-B3",
+        "system_version": "Windows 11 x64", "app_version": "7.2.9 x64", "lang_code": "en",
+        "system_lang_code": "en-US", "lang_pack": "tdesktop",
+    }
+    assert meta.password_2fa == "secret" and meta.proxy == "socks5://u:p@1.2.3.4:1080"
+    assert meta.label == "Demo User"
+
+
+def test_parse_json_minimal_and_bad():
+    from app import session_import as si
+
+    meta = si.parse_json("1.json", b'{"phone": "+7999", "proxy": null}')
+    assert meta.api is None and meta.label == "+7999" and meta.proxy == ""
+    meta = si.parse_json("2.json", b'{"api_id": 6, "api_hash": "eb06d4abfb49dc3eeb1aeb98ae0f581e", "proxy": "http://h:80"}')
+    assert meta.api["lang_pack"] == "" and meta.api["device_model"] and meta.proxy == "http://h:80"
+    with pytest.raises(si.ImportError_):
+        si.parse_json("3.json", b"[1,2]")
+    with pytest.raises(si.ImportError_):
+        si.parse_json("4.json", b"{not json")
+
+
+def test_pair_files_by_stem(tmp_path):
+    import io
+    import zipfile
+
+    from app import session_import as si
+
+    tele = _telethon_sqlite(tmp_path, bytes(256))
+    pyro = _pyrogram_sqlite(tmp_path, bytes([1]) * 256)
+    files = [("100200300.json", b'{"first_name": "A"}'), ("100200300_telethon.session", tele),
+             ("100200300_pyrogram.session", pyro), ("other.session", pyro), ("other.json", b'{"first_name": "B"}'),
+             ("readme.txt", b"not a session")]
+    bundles = si.pair_files(files)
+    assert [(b.key, b.session.name, b.meta.label) for b in bundles] == [
+        ("100200300", "100200300_telethon.session", "A"), ("other", "other.session", "B")]
+    # один json на единственную сессию подходит и при разных именах; zip раскрывается
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("acc/one.session", tele); zf.writestr("acc/params.json", b'{"phone": "1"}')
+        zf.writestr("acc/cache/big.bin", b"x")
+    bundles = si.pair_files(si.expand_zips([("pack.zip", buf.getvalue())]))
+    assert len(bundles) == 1 and bundles[0].meta.label == "+1"
+    with pytest.raises(si.ImportError_, match="нет сессии"):
+        si.pair_files([("a.json", b"{}")])
+    with pytest.raises(si.ImportError_, match="повреждён"):
+        si.pair_files([("x.session", b"SQLite format 3\x00" + b"\x00" * 100)])

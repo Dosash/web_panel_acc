@@ -43,6 +43,20 @@ Fernet. Поле `api_json` — «отпечаток» клиента (api_id, �
 Параметры устройства генерируются `API.TelegramDesktop.Generate(system="windows")` — клиент
 представляется официальным Telegram Desktop.
 
+### `app/session_import.py` — файлы .session → сессия
+Формат «session + json»: `.session` Telethon или Pyrogram (SQLite) либо строковая сессия, рядом `.json`
+с параметрами приложения (`app_id`, `app_hash`, `device`, `sdk`, `app_version`, `twoFA`, `proxy`, …).
+1. `expand_zips` раскрывает zip (берёт только `.session`/`.json`/`.txt` до 5 МБ), `pair_files` разбирает
+   файлы и подбирает `.json` к сессии по имени без суффикса `_telethon`/`_pyrogram`; из двух сессий
+   одного аккаунта остаётся Telethon. Единственный `.json` подходит единственной сессии при любом имени.
+2. `parse_session` достаёт `dc_id` и `auth_key` (адрес DC для Pyrogram — из таблицы `_DC`), отклоняет
+   сессии ботов и тестовых серверов. `parse_json` собирает `api_json` в том же виде, что и для tdata;
+   `lang_pack` = `tdesktop` только для `app_id` Telegram Desktop (2040). Без `api_id` в json —
+   параметры Telegram Desktop, как при импорте tdata.
+3. `convert_session` строит `StringSession`, подключается, проверяет авторизацию и при `new_session`
+   делает тот же QR-логин нового клиента, что и для tdata. Эндпоинт `/api/accounts/import-sessions`
+   обрабатывает сессии по очереди и возвращает подключённые аккаунты и ошибки по файлам.
+
 ### `app/manager.py`
 - `Manager` — словарь `Live` по id аккаунта. `Live` хранит клиент, статус
   (`offline | connecting | online | error`) и текст ошибки.

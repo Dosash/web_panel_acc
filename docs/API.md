@@ -34,6 +34,7 @@
 |---|---|---|
 | GET | `/api/accounts` | Список: `id, name, color, proxy, user_id, phone, username, full_name, status, error` |
 | POST | `/api/accounts/import` | multipart: `name`, `files[]` (файлы tdata с относительными путями или zip), `new_session`, `password_2fa`, `passcode`, `proxy`. Ответ — аккаунт + `updated` |
+| POST | `/api/accounts/import-sessions` | multipart: `name` (необязательно; при нескольких файлах — префикс, иначе имя/телефон из json), `files[]` (`.session` Telethon или Pyrogram, строковые сессии, `.json` с параметрами приложения, zip с ними), `new_session`, `password_2fa`, `proxy`. Пустые `password_2fa` и `proxy` берутся из json. Ответ — `{accounts: [аккаунт + updated], errors: [{file, error}]}`; `400`, если не подключён ни один |
 | PATCH | `/api/accounts/{aid}` | `{name?, color?, proxy?}`; смена прокси переподключает |
 | POST | `/api/accounts/{aid}/reconnect` | Переподключить |
 | POST | `/api/accounts/{aid}/read_all` | Отметить прочитанными все чаты аккаунта (и архив, и упоминания) → `{ok, count}` |

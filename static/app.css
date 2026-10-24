@@ -323,14 +323,29 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
 .ctx-check svg.i, .ctx-more svg.i { width: 16px; height: 16px; }
 .ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 
-.segmented { display: flex; background: var(--surface-2); border-radius: 12px; padding: 3px; gap: 2px; }
+.segmented { display: flex; position: relative; background: var(--surface-2); border-radius: 12px; padding: 3px; gap: 2px; }
 .seg {
   flex: 1; border: 0; background: transparent; padding: 7px 6px; border-radius: 9px; cursor: pointer;
-  color: var(--muted); font-weight: 600; font-size: 13px; transition: background .15s, color .15s;
+  color: var(--muted); font-weight: 600; font-size: 13px; transition: background .15s, color .2s var(--ease), transform .15s var(--ease);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; outline: none;
+  position: relative; z-index: 1;
 }
+.seg svg.i { width: 15px; height: 15px; flex: none; transition: transform .3s var(--spring); }
 .seg:hover { color: var(--text); }
+.seg:active { transform: scale(.96); }
+.seg:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
 .seg.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.seg.active svg.i { transform: translateY(-1px) scale(1.08); }
 :root[data-theme="dark"] .seg.active { background: var(--surface-3); }
+/* «бегунок»: при включённой анимации (segmentedPill) фон активного сегмента рисует он, а не сама кнопка */
+.segmented.has-pill .seg.active { background: transparent; box-shadow: none; }
+.seg-pill {
+  position: absolute; top: 3px; bottom: 3px; left: 3px; width: 0; border-radius: 9px; pointer-events: none;
+  background: var(--surface); box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge);
+  transition: transform .42s var(--spring), width .42s var(--spring), opacity .2s;
+}
+:root[data-theme="dark"] .seg-pill { background: var(--surface-3); }
+.seg-pill.still { transition: none; }
 
 .dialog-list { overflow-y: auto; flex: 1; padding: 2px 8px 12px; }
 .dialog {

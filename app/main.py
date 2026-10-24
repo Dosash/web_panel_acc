@@ -28,6 +28,7 @@ from . import bots, cache, poster, storage, updates
 from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
 from .manager import (MUTE_FOREVER, Manager, NoAccount, NotConnected, dialog_dict, display_name, message_dict,
                       parse_proxy, peer_type, username)
+from .session_import import convert_session, expand_zips, pair_files
 from .tdata_import import ImportError_, convert, save_upload
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -311,18 +312,61 @@ async def import_account(
         raise HTTPException(400, str(e))
     except (OSError, ConnectionError) as e:
         raise HTTPException(502, f"Нет связи с Telegram: {e}")
+    return await _store_imported(name, session_str, api, proxy.strip(), me)
 
+
+async def _store_imported(name: str, session_str: str, api: dict, proxy: str, me: dict) -> dict:
     existing = storage.find_by_user_id(me["id"])
     if existing:
         # Повторная загрузка того же аккаунта обновляет его сессию
-        account = storage.update_account(existing.id, session=session_str, api=api,
-                                         name=name, proxy=proxy.strip())
+        account = storage.update_account(existing.id, session=session_str, api=api, name=name, proxy=proxy)
         updated = True
     else:
-        account = storage.add_account(name, session_str, api, proxy.strip(), me)
+        account = storage.add_account(name, session_str, api, proxy, me)
         updated = False
     await manager.start(account)
     return {**manager.state(account.id), "updated": updated}
+
+
+@app.post("/api/accounts/import-sessions", dependencies=A)
+async def import_sessions(
+    name: str = Form(""),
+    password_2fa: str = Form(""),
+    new_session: bool = Form(False),
+    proxy: str = Form(""),
+    files: list[UploadFile] = File(...),
+):
+    """Аккаунты из файлов .session (Telethon/Pyrogram) с .json рядом; файлов может быть несколько."""
+    name, proxy = name.strip(), proxy.strip()
+    uploaded = [(f.filename or "", await f.read()) for f in files]
+    try:
+        bundles = pair_files(expand_zips(uploaded))
+    except ImportError_ as e:
+        raise HTTPException(400, str(e))
+    accounts, errors = [], []
+    for i, b in enumerate(bundles, 1):
+        acc_name = name if name and len(bundles) == 1 else f"{name} {i}" if name else b.meta.label or b.key
+        acc_proxy = proxy or b.meta.proxy
+        try:
+            proxy_cfg = parse_proxy(acc_proxy)
+        except ValueError as e:
+            errors.append({"file": b.session.name, "error": f"Прокси из json «{acc_proxy}»: {e}"})
+            continue
+        try:
+            session_str, api, me = await convert_session(b.session, b.meta.api, new_session=new_session,
+                                                         password_2fa=password_2fa or b.meta.password_2fa,
+                                                         proxy=proxy_cfg)
+        except ImportError_ as e:
+            errors.append({"file": b.session.name, "error": str(e)})
+            continue
+        except (OSError, ConnectionError) as e:
+            errors.append({"file": b.session.name, "error": f"Нет связи с Telegram: {e}"})
+            continue
+        accounts.append(await _store_imported(acc_name, session_str, api, acc_proxy, me))
+    if not accounts and errors:
+        raise HTTPException(400, errors[0]["error"] if len(errors) == 1
+                            else "Ни один аккаунт не подключён: " + "; ".join(e["error"] for e in errors))
+    return {"accounts": accounts, "errors": errors}
 
 
 class AccountPatch(BaseModel):

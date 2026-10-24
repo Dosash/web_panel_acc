@@ -1,6 +1,25 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "tg-panel", "runtimeExecutable": "./run.sh", "runtimeArgs": [], "port": 8080 }
+    {
+      "name": "tg-panel",
+      "runtimeExecutable": "./run.sh",
+      "runtimeArgs": [],
+      "port": 8080
+    },
+    {
+      "name": "tg-panel-test",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DATA_DIR=/tmp/tg-panel-test-data",
+        "WEB_PASSWORD=test-password",
+        "WEB_PORT=8097",
+        "UPDATE_CHECK=0",
+        ".venv/bin/python",
+        "-m",
+        "app"
+      ],
+      "port": 8097
+    }
   ]
 }
