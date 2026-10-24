@@ -179,7 +179,7 @@ async def init_db() -> None:
     for col, ddl in (("is_test", "INTEGER DEFAULT 0"), ("publish_at", "INTEGER"), ("approved_at", "INTEGER"),
                      ("xr_invoice_id", "TEXT"), ("xr_invoice_url", "TEXT"), ("post_json", "TEXT"),
                      ("total_rub", "REAL DEFAULT 0"), ("fk_payment_id", "TEXT"), ("fk_invoice_url", "TEXT"),
-                     ("fk_invoice_at", "INTEGER")):
+                     ("fk_invoice_at", "INTEGER"), ("cp_invoice_at", "INTEGER"), ("xr_invoice_at", "INTEGER")):
         if col not in cols:
             await _db.execute(f"ALTER TABLE orders ADD COLUMN {col} {ddl}")
     cur = await _db.execute("PRAGMA table_info(support_messages)")
@@ -530,15 +530,17 @@ async def update_order(order_id: int, **fields: Any) -> None:
     await db().commit()
 
 
-# счета CryptoBot и xRocket живут не дольше суток: заказы старше двух дней (и с прошедшим временем) не опрашиваем,
-# иначе список растёт бесконечно — их проверит кнопка «Я оплатил»
+# счета CryptoBot и xRocket живут не дольше суток: счета, выставленные больше двух дней назад (и заказы с прошедшим
+# временем), не опрашиваем — иначе список растёт бесконечно, а их проверит кнопка «Я оплатил». Отсчёт — от выставления
+# счёта (cp_invoice_at / xr_invoice_at), а не от одобрения заказа: давно одобренному заказу могут выставить свежий счёт.
+# У счетов из баз до этой версии отметки нет — для них берём дату одобрения
 POLL_WINDOW = 2 * 86400
 
 
 async def orders_with_xrocket_invoice() -> list[aiosqlite.Row]:
     cur = await db().execute(
         "SELECT * FROM orders WHERE status = ? AND xr_invoice_id IS NOT NULL AND is_test = 0"
-        " AND COALESCE(approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
+        " AND COALESCE(xr_invoice_at, approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
         (APPROVED, now() - POLL_WINDOW, now()),
     )
     return list(await cur.fetchall())
@@ -564,7 +566,7 @@ async def orders_with_fk_invoice(since: int) -> list[aiosqlite.Row]:
 async def orders_with_crypto_invoice() -> list[aiosqlite.Row]:
     cur = await db().execute(
         "SELECT * FROM orders WHERE status = ? AND cp_invoice_id IS NOT NULL"
-        " AND COALESCE(approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
+        " AND COALESCE(cp_invoice_at, approved_at, created_at) >= ? AND (publish_at IS NULL OR publish_at > ?)",
         (APPROVED, now() - POLL_WINDOW, now()),
     )
     return list(await cur.fetchall())

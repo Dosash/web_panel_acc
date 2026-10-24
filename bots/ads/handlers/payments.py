@@ -145,7 +145,7 @@ async def pay_crypto(call: CallbackQuery, callback_data: PayCb):
             log.error("createInvoice failed: %s", e)
             return await call.answer(t(lang, "crypto_fail"), show_alert=True)
         url = inv.get("bot_invoice_url") or inv.get("pay_url")
-        await db.update_order(order["id"], cp_invoice_id=inv["invoice_id"], cp_invoice_url=url)
+        await db.update_order(order["id"], cp_invoice_id=inv["invoice_id"], cp_invoice_url=url, cp_invoice_at=db.now())
     await nav(call, t(lang, "crypto_text", usd=fmt_usd(order["total_usd"]), id=order["id"],
                       test=t(lang, "crypto_testnet") if order["is_test"] else ""),
               crypto_kb(lang, order["id"], url))
@@ -193,7 +193,7 @@ async def pay_xrocket(call: CallbackQuery, callback_data: PayCb):
             log.error("xrocket createInvoice failed: %s", e)
             return await call.answer(t(lang, "xrocket_fail"), show_alert=True)
         url = inv["links"]["telegramBotLink"]
-        await db.update_order(order["id"], xr_invoice_id=inv["id"], xr_invoice_url=url)
+        await db.update_order(order["id"], xr_invoice_id=inv["id"], xr_invoice_url=url, xr_invoice_at=db.now())
     await nav(call, t(lang, "xrocket_text", usd=fmt_usd(order["total_usd"]), id=order["id"]),
               xrocket_kb(lang, order["id"], url))
     await call.answer()
