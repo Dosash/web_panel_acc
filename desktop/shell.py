@@ -181,21 +181,26 @@ class View(QWebEngineView):
 
 
 class ViewerWindow(QMainWindow):
-    """Отдельное окно для файлов панели, открытых «в новой вкладке» (фото, видео)."""
+    """Отдельное окно для файлов панели, открытых «в новой вкладке» (фото, видео), и для панели
+    встроенного бота (`bot` — его имя): у бота свои окна внутри страницы, поэтому Esc окно не закрывает."""
 
-    def __init__(self, shell: "ShellWindow", url: QUrl):
+    def __init__(self, shell: "ShellWindow", url: QUrl, bot: str = ""):
         super().__init__()
+        self.bot = bot
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowIcon(shell.windowIcon())
         self.setWindowTitle(APP_NAME)
         self.view = View(self)
         self.view.setPage(Page(shell.profile, shell, self.view))
         self.view.titleChanged.connect(lambda t: self.setWindowTitle(f"{t} — {APP_NAME}" if t else APP_NAME))
-        self.view.page().setBackgroundColor(Qt.black)
-        self.setCentralWidget(self.view)
-        self.resize(1000, 760)
-        QShortcut(QKeySequence("Esc"), self, self.close)
+        if bot:
+            self.resize(1280, 860)
+        else:
+            self.view.page().setBackgroundColor(Qt.black)
+            self.resize(1000, 760)
+            QShortcut(QKeySequence("Esc"), self, self.close)
         QShortcut(QKeySequence.Close, self, self.close)
+        self.setCentralWidget(self.view)
         self.view.load(url)
 
 
@@ -413,7 +418,16 @@ class ShellWindow(QMainWindow):
         (tg:// — в Telegram, если он установлен)."""
         if self.is_panel_url(url):
             if popup:
-                viewer = ViewerWindow(self, url)
+                # панель бота (<панель>/bots/<имя>/) — одно окно на бота: повторно поднимаем открытое
+                rest = url.path()[len(self.base_url.path().rstrip("/")):]
+                bot = rest.split("/")[2] if rest.startswith("/bots/") and rest.count("/") >= 2 else ""
+                for viewer in self.viewers:
+                    if bot and viewer.bot == bot:
+                        viewer.showNormal()
+                        viewer.raise_()
+                        viewer.activateWindow()
+                        return
+                viewer = ViewerWindow(self, url, bot)
                 self.viewers.append(viewer)
                 viewer.destroyed.connect(lambda *_: self.viewers.remove(viewer) if viewer in self.viewers else None)
                 viewer.show()

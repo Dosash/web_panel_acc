@@ -1,0 +1,439 @@
+"""«⚙️ Настройки»: web panel address and password, the bot's token source, premium emoji (SPEC_V23),
+admins, timezone (🕒, /timezone), the owner's other bots («🤖 Мои боты», /helperbots); /addadmin and
+/deladmin.
+
+The bot is changed only in the web panel («Настройки» → «Бот», SPEC_V22) — a token is never typed
+into Telegram. `app.__main__` puts the running bot's `TokenState` into the dispatcher
+(``dp["token_state"]``); without it the source is read from the DB setting.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
+from aiogram.filters import Command, CommandObject, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+
+from bots.posts.bot.callbacks import HelperBotCb, MenuCb, SettingsCb, TimezoneCb
+from bots.posts.bot.filters import TextIs, UserInput
+from bots.posts.bot.handlers.common import drop_prompt, leave_state, panel_button, panel_link_html
+from bots.posts.bot.keyboards import BTN_SETTINGS, ib, kb
+from bots.posts.bot.states import SettingsStates
+from bots.posts.bot.utils import NO_PREVIEW, esc, is_owner, premium_emoji_enabled, safe_answer, show
+from bots.posts.config import BOT_TOKEN_SETTING, TOKEN_SOURCE_ENV, TOKEN_SOURCE_PANEL, TokenState
+from bots.posts.services import helper_bots
+from bots.posts.services import timezone as timezone_service
+
+log = logging.getLogger(__name__)
+
+PASSWORD_SETTING = "web_password_hash"
+OWNER_ONLY = "Только владелец бота может управлять администраторами."
+ENV_PASSWORD_TEXT = "Пароль задан в .env (WEB_PASSWORD) — изменить его можно только там"
+
+PASSWORD_ENV = "env"
+PASSWORD_PANEL = "panel"
+
+TOKEN_SOURCE_TEXTS = {TOKEN_SOURCE_ENV: "из .env", TOKEN_SOURCE_PANEL: "задан в панели"}
+TOKEN_REJECTED_TEXT = "Токен из панели не принят Telegram — бот работает с токеном из .env"
+CHANGE_BOT_TEXT = "Сменить бота — в веб-панели: Настройки → Бот"
+
+PREMIUM_HELP = ("Telegram показывает премиум-эмодзи в каналах, только если у бота есть дополнительный "
+                "юзернейм, купленный на Fragment и привязанный к боту. Без него бот отправляет их обычными эмодзи. "
+                "Включите, если такой юзернейм есть.")
+
+
+def premium_lines(enabled: bool) -> list[str]:
+    """SPEC_V23: whether custom emoji are published as they are (HTML)."""
+    status = "доступны" if enabled else "недоступны"
+    return [f"✨ Премиум-эмодзи: {status}", f"<i>{esc(PREMIUM_HELP)}</i>"]
+
+
+def premium_button(enabled: bool) -> list:
+    return [ib(f"✨ Премиум-эмодзи: {'вкл' if enabled else 'выкл'}", SettingsCb(action="premium"))]
+
+
+HELPERS_HELP = ("Когда бота назначат администратором канала, он пришлёт кнопки «➕ @бот» — "
+                "одно нажатие, и ваш бот тоже станет админом этого канала.")
+HELPERS_USAGE = ("Командой: <code>/helperbots @first_bot @second_bot</code> — заменить весь список, "
+                 "<code>/helperbots -</code> — очистить.")
+HELPER_PROMPT = ("➕ <b>Добавить бота</b>\n\nПришлите юзернейм бота, например <code>@my_news_bot</code>, или ссылку "
+                 "t.me/…, можно несколько через пробел. Или просто перешлите сюда любое сообщение от этого бота.")
+
+
+def helpers_lines(names: list[str]) -> list[str]:
+    listed = ", ".join(f"@{esc(n)}" for n in names) if names else "не заданы"
+    return [f"🤖 Мои боты: {listed}"]
+
+
+def helpers_screen(names: list[str], note: str = "") -> tuple[str, InlineKeyboardMarkup]:
+    """«🤖 Мои боты»: the list with 🗑 per bot and «➕ Добавить бота»."""
+    lines = [note, ""] if note else []
+    lines += ["🤖 <b>Мои боты</b>", f"<i>{esc(HELPERS_HELP)}</i>", ""]
+    if names:
+        lines += [f"{i}. @{esc(name)}" for i, name in enumerate(names, 1)]
+    else:
+        lines.append("Пока ни одного бота.")
+    lines += ["", HELPERS_USAGE]
+    rows = [[ib(f"🗑 @{name}"[:64], HelperBotCb(action="del", name=name))] for name in names]
+    if len(names) < helper_bots.MAX_HELPERS:
+        rows.append([ib("➕ Добавить бота", HelperBotCb(action="add"), style="primary")])
+    rows.append([ib("↩️ Настройки", SettingsCb(action="show"))])
+    return "\n".join(lines), kb(*rows)
+
+
+async def current_token_state(db: Any, state: TokenState | None = None) -> TokenState:
+    """Where the running bot's token comes from: the dispatcher's TokenState, else the DB."""
+    if state is not None:
+        return state
+    source = TOKEN_SOURCE_PANEL if await db.get_setting(BOT_TOKEN_SETTING) else TOKEN_SOURCE_ENV
+    return TokenState(source=source)
+
+
+def token_lines(state: TokenState) -> list[str]:
+    lines = [f"🤖 Токен бота: {TOKEN_SOURCE_TEXTS.get(state.source, TOKEN_SOURCE_TEXTS[TOKEN_SOURCE_ENV])}"]
+    if state.panel_token_rejected:
+        lines.append(f"⚠️ {TOKEN_REJECTED_TEXT}")
+    lines.append(CHANGE_BOT_TEXT)
+    return lines
+
+
+async def password_is_set(db: Any) -> bool:
+    """A password was set in the web panel (WEB_PASSWORD from .env is not looked at)."""
+    return await db.get_setting(PASSWORD_SETTING) is not None
+
+
+async def password_source(db: Any, config: Any) -> str | None:
+    """Same as app.web.auth.password_source: "env" (WEB_PASSWORD in .env, it overrides the panel
+    setting), "panel" (set in the panel) or None (no password — the panel is open)."""
+    if getattr(config, "web_password", None):
+        return PASSWORD_ENV
+    return PASSWORD_PANEL if await password_is_set(db) else None
+
+
+async def reset_web_password(db: Any) -> None:
+    """Remove the web panel password (same as app.web.auth.reset_password): the panel becomes open."""
+    await db.set_setting(PASSWORD_SETTING, None)
+
+
+def _admin_line(admin: dict) -> str:
+    name = esc(admin.get("full_name") or "") or "без имени"
+    if admin.get("username"):
+        name += f" (@{esc(admin['username'])})"
+    icon = "👑" if admin.get("is_owner") else "•"
+    return f"{icon} {name} — <code>{admin['user_id']}</code>"
+
+
+async def settings_screen(db: Any, config: Any, user_id: int,
+                          token: TokenState | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    owner = await is_owner(db, user_id)
+    source = await password_source(db, config)
+    admins = await db.list_admins()
+    premium = await premium_emoji_enabled(db)
+    if source == PASSWORD_ENV:
+        password_line = f"🔒 {ENV_PASSWORD_TEXT}."
+    elif source == PASSWORD_PANEL:
+        password_line = "🔑 Пароль панели: установлен ✅"
+    else:
+        password_line = ("🔑 Пароль панели: не установлен ⚠️ — панель открыта всем, у кого есть доступ к адресу. "
+                         "Задать пароль можно в разделе «Настройки» веб-панели или в .env (WEB_PASSWORD).")
+    lines = [
+        "⚙️ <b>Настройки</b>",
+        "",
+        f"🌐 Веб-панель: {panel_link_html(config)}",
+        password_line,
+        f"🕒 Часовой пояс: {esc(timezone_service.describe(config.tz))}"
+        + ("" if timezone_service.source(config) == timezone_service.SOURCE_SETTING else " — из .env"),
+        "",
+        *(esc(line) for line in token_lines(await current_token_state(db, token))),
+        "",
+        *premium_lines(premium),
+        "",
+        *helpers_lines(await helper_bots.get_helpers(db)),
+        "",
+        f"👥 <b>Администраторы</b> ({len(admins)}):",
+        *(_admin_line(admin) for admin in admins),
+    ]
+    if owner:
+        lines += [
+            "",
+            "Добавить администратора: <code>/addadmin ID</code>",
+            "Удалить: <code>/deladmin ID</code>",
+            "ID пользователя можно узнать, переслав его сообщение боту @userinfobot.",
+        ]
+    rows = [premium_button(premium), [ib("🕒 Часовой пояс", TimezoneCb(i=-2)),
+                                      ib("🤖 Мои боты", HelperBotCb(action="show"))]]
+    if owner and source == PASSWORD_PANEL:
+        rows.append([ib("🔑 Сбросить пароль веб-панели", SettingsCb(action="reset"), style="danger")])
+    open_panel = panel_button("🌐 Открыть веб-панель", config)  # only for an https:// address
+    if open_panel is not None:
+        rows.append([open_panel])
+    rows.append([ib("🔄 Обновить", SettingsCb(action="show"))])
+    return "\n".join(lines), kb(*rows)
+
+
+async def cmd_settings(message: Message, state: FSMContext, db: Any, config: Any,
+                       token_state: TokenState | None = None) -> None:
+    await leave_state(message.bot, message.chat.id, state)
+    text, markup = await settings_screen(db, config, message.from_user.id, token_state)
+    await message.answer(text, reply_markup=markup, link_preview_options=NO_PREVIEW)
+
+
+async def cb_show(callback: CallbackQuery, state: FSMContext, db: Any, config: Any,
+                  token_state: TokenState | None = None) -> None:
+    await drop_prompt(state)
+    await safe_answer(callback)
+    text, markup = await settings_screen(db, config, callback.from_user.id, token_state)
+    await show(callback, text, markup)
+
+
+async def _refuse_env_password(callback: CallbackQuery, config: Any) -> bool:
+    """WEB_PASSWORD from .env cannot be reset from the bot: explain it (True = refused)."""
+    if getattr(config, "web_password", None):
+        await safe_answer(callback, ENV_PASSWORD_TEXT, alert=True)
+        return True
+    return False
+
+
+async def cb_reset(callback: CallbackQuery, db: Any, config: Any) -> None:
+    if await _refuse_env_password(callback, config):
+        return
+    if not await is_owner(db, callback.from_user.id):
+        await safe_answer(callback, "Сбросить пароль может только владелец бота", alert=True)
+        return
+    await safe_answer(callback)
+    await show(
+        callback,
+        "🔑 Сбросить пароль веб-панели?\n\nПанель станет доступна без пароля всем, у кого есть доступ к "
+        "её адресу, а все открытые сеансы входа завершатся. Новый пароль можно задать в самой панели.",
+        kb([ib("🔑 Да, сбросить", SettingsCb(action="reset_ok"), style="danger"),
+            ib("↩️ Отмена", SettingsCb(action="show"))]),
+    )
+
+
+async def cb_reset_ok(callback: CallbackQuery, db: Any, config: Any,
+                      token_state: TokenState | None = None) -> None:
+    if await _refuse_env_password(callback, config):
+        return
+    if not await is_owner(db, callback.from_user.id):
+        await safe_answer(callback, "Сбросить пароль может только владелец бота", alert=True)
+        return
+    await reset_web_password(db)
+    log.warning("Web panel password reset by %s", callback.from_user.id)
+    await safe_answer(callback, "Пароль сброшен", alert=False)
+    text, markup = await settings_screen(db, config, callback.from_user.id, token_state)
+    await show(callback, "✅ Пароль веб-панели сброшен — панель открыта без пароля.\n\n" + text, markup)
+
+
+async def cb_premium(callback: CallbackQuery, db: Any, config: Any, token_state: TokenState | None = None) -> None:
+    """Toggle «✨ Премиум-эмодзи» (any admin, SPEC_V23)."""
+    enabled = not await premium_emoji_enabled(db)
+    await db.set_premium_emoji(enabled)
+    log.info("Premium emoji %s by %s", "enabled" if enabled else "disabled", callback.from_user.id)
+    await safe_answer(callback, "Премиум-эмодзи публикуются как есть" if enabled
+                      else "Премиум-эмодзи будут отправляться обычными")
+    text, markup = await settings_screen(db, config, callback.from_user.id, token_state)
+    await show(callback, text, markup)
+
+
+TZ_HELP = ("Все времена бота — расписание каналов, «ко времени», контент-план, дни статистики — "
+           "считаются в этом поясе. Уже запланированные посты выйдут в тот же момент, что и раньше; "
+           "время слотов («09:00») после смены считается по новому поясу.")
+TZ_TYPE_HINT = "Другой пояс: <code>/timezone Europe/Moscow</code> или <code>/timezone UTC+3</code>."
+
+
+def timezone_screen(config: Any) -> tuple[str, InlineKeyboardMarkup]:
+    current = timezone_service.tz_key(config.tz)
+    from_setting = timezone_service.source(config) == timezone_service.SOURCE_SETTING
+    lines = [
+        "🕒 <b>Часовой пояс</b>",
+        "",
+        f"Сейчас: <b>{esc(timezone_service.describe(config.tz))}</b>" + ("" if from_setting else " — из .env"),
+        f"<i>{esc(TZ_HELP)}</i>",
+        "",
+        TZ_TYPE_HINT,
+    ]
+    buttons = []
+    for index, (name, label) in enumerate(timezone_service.COMMON):
+        mark = "✅ " if name == current else ""
+        offset = timezone_service.offset_text(timezone_service.parse_timezone(name))
+        buttons.append(ib(f"{mark}{label} ({offset})", TimezoneCb(i=index)))
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    if from_setting:
+        env = timezone_service.describe(config.tz_env)
+        rows.append([ib(f"↩️ Как в .env: {env}", TimezoneCb(i=-1))])
+    rows.append([ib("⬅️ Назад", SettingsCb(action="show"))])
+    return "\n".join(lines), kb(*rows)
+
+
+async def cb_timezone(callback: CallbackQuery, callback_data: TimezoneCb, db: Any, config: Any) -> None:
+    """Timezone list (i = -2), a choice from it (i ≥ 0) or back to .env (i = -1); any admin."""
+    if callback_data.i == -2:
+        await safe_answer(callback)
+    else:
+        if callback_data.i == -1:
+            name = None
+        elif 0 <= callback_data.i < len(timezone_service.COMMON):
+            name = timezone_service.COMMON[callback_data.i][0]
+        else:
+            await safe_answer(callback, "Кнопка устарела — откройте список заново", alert=True)
+            return
+        tz = await timezone_service.set_timezone(db, config, name)
+        log.info("Timezone set to %s by %s", timezone_service.tz_key(tz), callback.from_user.id)
+        await safe_answer(callback, f"Часовой пояс: {timezone_service.describe(tz)}")
+    text, markup = timezone_screen(config)
+    await show(callback, text, markup)
+
+
+async def cmd_timezone(message: Message, command: CommandObject, state: FSMContext, db: Any, config: Any) -> None:
+    """/timezone — the list; /timezone <name|UTC±N> — set it; /timezone env — back to .env."""
+    await leave_state(message.bot, message.chat.id, state)
+    raw = (command.args or "").strip()
+    note = ""
+    if raw:
+        try:
+            tz = await timezone_service.set_timezone(db, config, None if raw.lower() in ("env", ".env") else raw)
+        except ValueError as exc:
+            await message.answer(f"⚠️ {esc(str(exc))}")
+            return
+        log.info("Timezone set to %s by %s", timezone_service.tz_key(tz), message.from_user.id)
+        note = f"✅ Часовой пояс: <b>{esc(timezone_service.describe(tz))}</b>\n\n"
+    text, markup = timezone_screen(config)
+    await message.answer(note + text, reply_markup=markup, link_preview_options=NO_PREVIEW)
+
+
+async def cmd_helperbots(message: Message, command: CommandObject, state: FSMContext, db: Any) -> None:
+    """/helperbots — «🤖 Мои боты»; /helperbots @a @b — replace the list; /helperbots - — clear it (any admin)."""
+    await leave_state(message.bot, message.chat.id, state)
+    raw = (command.args or "").strip()
+    note = ""
+    if raw:
+        try:
+            me = await message.bot.me()
+            names = [] if raw in ("-", "—") else helper_bots.parse_list(raw, me.username)
+        except ValueError as exc:
+            await message.answer(f"⚠️ {esc(str(exc))}")
+            return
+        await helper_bots.set_helpers(db, names)
+        log.info("Helper bots set to %s by %s", names, message.from_user.id)
+        note = "✅ Сохранено."
+    text, markup = helpers_screen(await helper_bots.get_helpers(db), note)
+    await message.answer(text, reply_markup=markup)
+
+
+async def cb_helpers(callback: CallbackQuery, callback_data: HelperBotCb, state: FSMContext, db: Any) -> None:
+    """«🤖 Мои боты» buttons: show the list, ask for a bot to add, remove one (any admin)."""
+    names = await helper_bots.get_helpers(db)
+    note = ""
+    if callback_data.action == "add":
+        await safe_answer(callback)
+        await leave_state(callback.bot, callback.from_user.id, state)
+        await state.set_state(SettingsStates.helper_bot)
+        await show(callback, HELPER_PROMPT, kb([ib("↩️ Назад", HelperBotCb(action="show"))]))
+        return
+    await drop_prompt(state)
+    if callback_data.action == "del":
+        left = [n for n in names if n.lower() != callback_data.name.lower()]
+        if len(left) < len(names):
+            names = await helper_bots.set_helpers(db, left)
+            log.info("Helper bot @%s removed by %s", callback_data.name, callback.from_user.id)
+            note = f"🗑 @{esc(callback_data.name)} убран из списка."
+    await safe_answer(callback)
+    await show(callback, *helpers_screen(names, note))
+
+
+def _forwarded_bot(message: Message) -> str | None:
+    """Username of the bot a forwarded message came from."""
+    origin = message.forward_origin
+    user = getattr(origin, "sender_user", None)
+    return user.username if user is not None and user.is_bot and user.username else None
+
+
+async def on_helper_bot(message: Message, state: FSMContext, db: Any) -> None:
+    """Answer to «➕ Добавить бота»: usernames / t.me links, or a message forwarded from the bot."""
+    raw = _forwarded_bot(message) or message.text or ""
+    if not raw.strip():
+        await message.answer("Пришлите юзернейм бота текстом или перешлите сообщение от него. Или нажмите «↩️ Назад».")
+        return
+    names = await helper_bots.get_helpers(db)
+    try:
+        me = await message.bot.me()
+        new = helper_bots.parse_list(raw, me.username)
+        merged = helper_bots.parse_list(names + new, me.username)
+    except ValueError as exc:
+        await message.answer(f"⚠️ {esc(str(exc))}\n\nПопробуйте ещё раз или нажмите «↩️ Назад».",
+                             reply_markup=kb([ib("↩️ Назад", HelperBotCb(action="show"))]))
+        return
+    await state.clear()
+    added = [n for n in merged if n.lower() not in {m.lower() for m in names}]
+    await helper_bots.set_helpers(db, merged)
+    log.info("Helper bots %s added by %s", added, message.from_user.id)
+    note = (f"✅ Добавлено: {', '.join(f'@{esc(n)}' for n in added)}" if added else "Эти боты уже в списке.")
+    text, markup = helpers_screen(merged, note)
+    await message.answer(text, reply_markup=markup)
+
+
+def _parse_user_id(command: CommandObject) -> int | None:
+    raw = (command.args or "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else None
+
+
+async def cmd_addadmin(message: Message, command: CommandObject, db: Any) -> None:
+    if not await is_owner(db, message.from_user.id):
+        await message.answer(OWNER_ONLY)
+        return
+    user_id = _parse_user_id(command)
+    if user_id is None:
+        await message.answer("Использование: <code>/addadmin ID</code> — числовой ID пользователя Telegram.")
+        return
+    if await db.is_admin(user_id):
+        await message.answer(f"Пользователь <code>{user_id}</code> уже администратор.")
+        return
+    await db.add_admin(user_id)
+    log.warning("Admin %s added by %s", user_id, message.from_user.id)
+    try:
+        await message.bot.send_message(chat_id=user_id,
+                                       text="👋 Вас назначили администратором бота. Нажмите /start.")
+        note = "Я отправил ему уведомление."
+    except TelegramAPIError:
+        note = "Попросите его написать боту /start."
+    await message.answer(f"✅ Пользователь <code>{user_id}</code> добавлен в администраторы. {note}")
+
+
+async def cmd_deladmin(message: Message, command: CommandObject, db: Any) -> None:
+    if not await is_owner(db, message.from_user.id):
+        await message.answer(OWNER_ONLY)
+        return
+    user_id = _parse_user_id(command)
+    if user_id is None:
+        await message.answer("Использование: <code>/deladmin ID</code> — числовой ID администратора.")
+        return
+    if not await db.is_admin(user_id):
+        await message.answer(f"Пользователь <code>{user_id}</code> не администратор.")
+        return
+    if not await db.remove_admin(user_id):
+        await message.answer("Владельца бота удалить нельзя.")
+        return
+    log.warning("Admin %s removed by %s", user_id, message.from_user.id)
+    await message.answer(f"✅ Пользователь <code>{user_id}</code> больше не администратор.")
+
+
+def create_router() -> Router:
+    router = Router(name="settings")
+    router.message.register(cmd_settings, Command("settings"))
+    router.message.register(cmd_settings, TextIs(BTN_SETTINGS))
+    router.message.register(cmd_timezone, Command("timezone"))
+    router.message.register(cmd_helperbots, Command("helperbots"))
+    router.message.register(on_helper_bot, StateFilter(SettingsStates.helper_bot), UserInput())
+    router.message.register(cmd_addadmin, Command("addadmin"))
+    router.message.register(cmd_deladmin, Command("deladmin"))
+    router.callback_query.register(cb_show, MenuCb.filter(F.action == "settings"))
+    router.callback_query.register(cb_show, SettingsCb.filter(F.action == "show"))
+    router.callback_query.register(cb_reset, SettingsCb.filter(F.action == "reset"))
+    router.callback_query.register(cb_reset_ok, SettingsCb.filter(F.action == "reset_ok"))
+    router.callback_query.register(cb_premium, SettingsCb.filter(F.action == "premium"))
+    router.callback_query.register(cb_timezone, TimezoneCb.filter())
+    router.callback_query.register(cb_helpers, HelperBotCb.filter())
+    return router

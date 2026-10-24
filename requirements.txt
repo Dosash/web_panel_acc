@@ -7,3 +7,8 @@ cryptography==50.0.2
 itsdangerous==2.2.0
 python-dotenv==1.2.4
 python-socks[asyncio]==3.1.1
+# встроенные боты (bots/): бот постинга и бот рекламы
+aiogram==3.31.0
+aiohttp==3.14.5
+aiosqlite==0.22.1
+tzdata==2026.5

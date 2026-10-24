@@ -19,8 +19,8 @@
 |---|---|---|---|
 | POST | `/api/login` | `{password}` | `{ok}` + cookie |
 | POST | `/api/logout` | — | `{ok}` |
-| GET | `/api/session` | — | `{ok, auth, version, hub_url}` — `auth: false`, если пароль отключён; `hub_url` — ссылка «Все панели» или пустая строка |
-| GET | `/api/health` | — | Без входа. `{status: "ok" \| "degraded", version, accounts, online, errors}` — `degraded`, если есть аккаунты с ошибкой |
+| GET | `/api/session` | — | `{ok, auth, version}` — `auth: false`, если пароль отключён |
+| GET | `/api/health` | — | Без входа. `{status: "ok" \| "degraded", version, accounts, online, errors, bots}` — `degraded`, если есть аккаунты с ошибкой; `bots` — состояние подключённых ботов: `{posts: "running", ads: "off"}` (`off`, `starting`, `running`, `error`) |
 | GET | `/api/update?force=` | — | Последний релиз на GitHub: `{current, latest, available, notes, page, published_at, docker, enabled, checked_at, error}`. `available` — релиз новее этой панели; `notes` — описание релиза (Markdown); `docker` — панель в контейнере. Ответ GitHub кэшируется на 6 часов (после ошибки — 15 минут); `force=1` — спросить заново (не чаще раза в минуту). При `UPDATE_CHECK=0` — только `{current, enabled: false, available: false, docker}` |
 
 Если задан `WEB_PREFIX` (например, `/accounts`), все пути — с ним: `/accounts/api/session`, `/accounts/ws`.
@@ -151,3 +151,18 @@ sender_name, reply_to, media, action, views, pinned`.
 | `edit` | `message` | Сообщение отредактировано |
 | `delete` | `account_id`, `chat_id` (может быть `null` для личных чатов), `ids` | Сообщения удалены |
 | `read` | `account_id`, `chat_id`, `max_id`, `outbox`, `unread` | `outbox: true` — собеседник прочитал ваши сообщения; `false` — чат прочитан в другом клиенте или панелью, `unread` — сколько осталось непрочитанным |
+
+## Встроенные боты
+
+`name` — `posts` (бот постинга) или `ads` (бот рекламы). Бот — отдельный процесс (`app/bots.py`), токен наружу
+не отдаётся — только `…` и последние 4 символа.
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/bots` | Список: `name, title, about, configured, enabled, status, error, username, bot_name, token, admin_ids, timezone`. `status`: `off`, `starting`, `running`, `error` |
+| PUT | `/api/bots/{name}` | `{token?, admin_ids, timezone}` — настройка запуска. Токен проверяется у Telegram (`getMe`); без `token` остаётся прежний. Сохраняет и (пере)запускает бота в фоне — ответ сразу, со `status: "starting"` |
+| POST | `/api/bots/{name}/start` | Включить (бот будет запускаться вместе с панелью) |
+| POST | `/api/bots/{name}/stop` | Выключить (в фоне: ответ со `status: "stopping"`, бот даёт начатым публикациям до ~72 с) |
+| GET | `/api/bots/{name}/log` | `{lines}` — последние 100 строк вывода бота |
+| * | `/bots/{name}/…` | Веб-панель бота через панель (обратный прокси на его порт на 127.0.0.1, с заголовком `X-TG-Panel-Key`); нужен вход в TG Panel, кроме `POST /bots/ads/hook/…` (вебхук оплаты) |
+

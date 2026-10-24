@@ -919,3 +919,48 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
   .msg.show-actions .actions { display: flex; }
   .tip { display: none; }
 }
+
+/* ================= Встроенные боты (бот постинга, бот рекламы) ================= */
+.rail-tool.bot-tool .dot {
+  position: absolute; right: 5px; bottom: 5px; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--bg); display: none;
+}
+.rail-tool.bot-tool .dot.online, .rail-tool.bot-tool .dot.error, .rail-tool.bot-tool .dot.connecting { display: block; }
+.app.bot-mode .sidebar, .app.bot-mode .chat { display: none; }
+.bot-view {
+  grid-column: 2 / -1; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin-top: 8px;
+  background: var(--surface); border-radius: 22px 0 0 0; border: 1px solid var(--border); border-right: 0; border-bottom: 0;
+  overflow: hidden;
+}
+.bot-view[hidden] { display: none; }
+.bot-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px 10px 18px; border-bottom: 1px solid var(--border); }
+.bot-head .bot-ico { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: #fff; background: var(--grad); flex: none; }
+.bot-meta { flex: 1; min-width: 0; }
+.bot-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bot-sub { font-size: 12.5px; }
+.icon-btn.on { color: var(--accent); background: var(--accent-soft); }
+.bot-body { flex: 1; min-height: 0; position: relative; overflow: auto; }
+.bot-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+.bot-setup { min-height: 100%; display: grid; place-items: center; padding: 28px 16px; }
+.bot-card { width: min(520px, 100%); }
+.bot-card h2 { margin: 14px 0 6px; }
+.bot-card > p { margin: 0 0 20px; line-height: 1.5; }
+.bot-hero { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; color: #fff; background: var(--grad); }
+.bot-hero svg.i { width: 32px; height: 32px; }
+.bot-card .checks .opt .small { margin-left: auto; }
+.bot-state { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px 16px; text-align: center; }
+.bot-state h3 { margin: 6px 0 0; }
+.bot-state p { margin: 0; max-width: 460px; line-height: 1.5; }
+.bot-state-ico { width: 60px; height: 60px; border-radius: 18px; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); }
+.bot-state-ico.err { color: var(--danger); }
+.bot-state-ico svg.i { width: 28px; height: 28px; }
+.bot-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.bot-error, .bot-log {
+  max-width: min(720px, 100%); white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; margin: 0;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px;
+}
+.bot-log { width: min(720px, 100%); max-height: 320px; overflow: auto; }
+@media (max-width: 860px) {
+  .bot-view { border-radius: 18px 0 0 0; }
+}

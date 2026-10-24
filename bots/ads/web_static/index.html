@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru" data-app="ads">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Реклама — панель</title>
+<link rel="icon" type="image/svg+xml" href="__PREFIX__/static/favicon.svg">
+<link rel="stylesheet" href="__PREFIX__/static/tokens.css?v=__ASSETS__">
+<link rel="stylesheet" href="__PREFIX__/static/app.css?v=__ASSETS__">
+<!-- оформление TG Panel (static/bots-theme.css панели): панель бота открыта по адресу <панель>/bots/ads/ -->
+<link rel="stylesheet" href="__PREFIX__/../../bots-theme.css">
+<script>try{var t=localStorage.getItem('panel-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>window.PANEL = { prefix: "__PREFIX__", version: "__VERSION__", tz: "__TZ__" };</script>
+</head>
+<body>
+<div id="app"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="__PREFIX__/static/app.js?v=__ASSETS__"></script>
+</body>
+</html>

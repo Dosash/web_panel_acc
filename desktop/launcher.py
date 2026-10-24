@@ -40,7 +40,7 @@ def setup_logging(data: Path) -> Path:
 def prepare_environment(data: Path) -> None:
     # настройки для app.config — до импорта app. Пароль случайный на каждый запуск: вход выполняет
     # само приложение (cookie), а другие программы на компьютере в панель не попадут
-    os.environ.update(DATA_DIR=str(data), WEB_HOST="127.0.0.1", WEB_PREFIX="", HUB_URL="",
+    os.environ.update(DATA_DIR=str(data), WEB_HOST="127.0.0.1", WEB_PREFIX="",
                       WEB_PASSWORD=secrets.token_urlsafe(32))
     if sys.platform.startswith("linux"):
         # Qt 5 WebEngine под Wayland работает нестабильно — через XWayland надёжнее
@@ -60,7 +60,25 @@ def prepare_environment(data: Path) -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TGPanel.Desktop")
 
 
+def run_bot(name: str) -> int:
+    """tg-panel --bot posts|ads: встроенный бот, которого запускает панель (app/bots.py), — без окна.
+    У оконной сборки под Windows sys.stdin/stdout — None, хотя панель передаёт каналы: открываем их сами."""
+    for fd, attr, mode in ((0, "stdin", "r"), (1, "stdout", "w"), (2, "stderr", "w")):
+        if getattr(sys, attr) is None:
+            try:
+                setattr(sys, attr, os.fdopen(fd, mode, encoding="utf-8", errors="replace", buffering=1))
+            except OSError:
+                # без stdin бот не узнает о выходе панели — но и devnull не годится: конец файла сразу
+                setattr(sys, attr, None if fd == 0 else open(os.devnull, mode, encoding="utf-8"))
+    from bots.__main__ import main as bot_main
+    bot_main(name)
+    return 0
+
+
 def main() -> int:
+    if "--bot" in sys.argv:
+        i = sys.argv.index("--bot")
+        return run_bot(sys.argv[i + 1] if i + 1 < len(sys.argv) else "")
     start_hidden = "--hidden" in sys.argv
     data = paths.data_dir()
     data.mkdir(parents=True, exist_ok=True)
