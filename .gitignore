@@ -12,3 +12,8 @@ desktop/dist/
 desktop/release/
 .pytest_cache/
 .ruff_cache/
+
+# сгенерированное для демо-ролика (docs/video/src/render.py)
+docs/video/src/app.css
+docs/video/src/icons.js
+docs/video/src/audio.wav

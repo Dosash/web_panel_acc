@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <title>TG Panel — демо-ролик</title>
+  <link rel="stylesheet" href="fonts/inter.css">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="mb" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feGaussianBlur id="mb-blur" stdDeviation="0 0"/></filter>
+  </svg>
+  <div id="stage">
+    <div id="bgfx"></div>
+    <div id="world">
+      <div id="intro"></div>
+      <main id="panel" class="app"></main>
+      <div id="panel-light" hidden></div>
+      <div id="phone" hidden></div>
+    </div>
+    <div id="hud">
+      <div id="captions"></div>
+      <div id="outro"></div>
+    </div>
+  </div>
+  <script src="icons.js"></script>
+  <script src="demo.js"></script>
+  <script src="audio.js"></script>
+</body>
+</html>

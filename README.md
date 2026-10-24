@@ -12,6 +12,12 @@
   панели, их панели открываются тут же или в отдельном окне ([подробно](#встроенные-боты)).
 - Есть **программа для Windows, Linux и macOS** — окно к вашей панели на сервере или самостоятельная, с автообновлением: [desktop/](desktop/README.md).
 
+**Демо-ролик** — 45 секунд со звуком: пять аккаунтов в одном окне, ответ клиенту, канал с кнопками и
+мини-приложением, встроенный бот постинга, светлая тема и телефон. Видео: [docs/video/demo.mp4](docs/video/demo.mp4),
+ниже — его сжатая версия без звука (исходники сцены — в [docs/video/src](docs/video/src/README.md)).
+
+![Демо-ролик TG Panel](docs/video/demo.webp)
+
 ![Общий список диалогов всех аккаунтов и канал](docs/img/overview.png)
 
 ## Содержание
@@ -560,6 +566,7 @@ Python-код (`app/`) — после правок перезапустите `.
 | `bots/posts`, `bots/ads` | бот постинга и бот рекламы (aiogram 3 + aiohttp + SQLite) со своими веб-панелями |
 | `static/` | интерфейс (HTML, CSS, JS без сборки) |
 | `docs/` | [архитектура](docs/ARCHITECTURE.md), [API](docs/API.md), [разработка](docs/DEVELOPMENT.md), [планы](docs/ROADMAP.md) |
+| `docs/video/` | демо-ролик `demo.mp4` и его исходники: сцена на HTML/JS + `render.py` ([подробно](docs/video/src/README.md)) |
 | `Dockerfile`, `docker-compose.yml` | сборка и запуск в Docker |
 | `run.sh` | запуск без Docker |
 | `.env.example` | шаблон настроек |
