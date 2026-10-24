@@ -144,6 +144,48 @@ def test_parse_version():
     assert updates.parse_version("0.12.1") > updates.parse_version("0.9.9")
 
 
+def test_docker_log_demux():
+    frame = lambda stream, text: bytes([stream, 0, 0, 0]) + len(text).to_bytes(4, "big") + text
+    raw = frame(1, b"== git pull\n") + frame(2, "ошибка\n".encode())
+    assert updates._demux(raw) == "== git pull\nошибка\n"
+    assert updates._demux(raw + b"\x01\x00") == "== git pull\nошибка\n"   # недописанный кадр — пропускаем
+
+
+def test_self_update_mode(monkeypatch, tmp_path):
+    sock = tmp_path / "docker.sock"
+    monkeypatch.setattr(updates, "SOCK", str(sock))
+    monkeypatch.setattr(updates, "DOCKER", True)
+    assert updates.mode() == ""                      # контейнер без сокета Docker — только команда
+    sock.touch()
+    assert updates.mode() == "docker"
+    monkeypatch.setattr(updates, "SELF_UPDATE", False)
+    assert updates.mode() == ""
+    monkeypatch.setattr(updates, "SELF_UPDATE", True)
+    monkeypatch.setattr(updates, "DOCKER", False)
+    monkeypatch.setattr(updates, "restart", None)
+    assert updates.mode() == ""                      # программа для компьютера: перезапускать некому
+
+
+def test_git_update(monkeypatch):
+    import asyncio
+    calls, restarted = [], []
+    monkeypatch.setattr(updates, "mode", lambda: "git")
+    monkeypatch.setattr(updates, "_sh", lambda title, *cmd: calls.append(cmd[:3]))
+    monkeypatch.setattr(updates, "restart", lambda: restarted.append(True))
+    monkeypatch.setattr(updates, "_job", {"running": True, "log": "", "error": ""})
+    updates._run_git()
+    assert calls[0] == ("git", "pull", "--ff-only") and calls[1][1:3] == ("-m", "pip") and restarted
+    assert asyncio.run(updates.progress())["state"] == "done"
+
+    def fail(title, *cmd):
+        raise updates.UpdateError("git pull: код выхода 1")
+    monkeypatch.setattr(updates, "_sh", fail)
+    restarted.clear()
+    updates._run_git()
+    p = asyncio.run(updates.progress())
+    assert p["state"] == "failed" and "git pull" in p["error"] and not restarted
+
+
 # ---------- tdata ----------
 
 def test_safe_rel_and_wanted():

@@ -15,6 +15,9 @@ services:
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
+      # кнопка «Обновить панель»: через Docker панель запускает помощник с git pull и docker compose up --build
+      # (app/updates.py). Доступ к Docker — это права root на сервере; без кнопки — уберите строку
+      - /var/run/docker.sock:/var/run/docker.sock
     mem_limit: 1g
     logging:
       driver: json-file

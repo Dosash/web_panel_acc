@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 
 
 def _env(name: str, old: str, default: str = "") -> str:
@@ -37,6 +37,8 @@ WEB_PREFIX = normalize_prefix(os.getenv("WEB_PREFIX", ""))
 UPDATE_CHECK = os.getenv("UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")
 UPDATE_URL = _env("UPDATE_URL", "TG_PANEL_UPDATE_URL",
                   "https://api.github.com/repos/Dosash/web_panel_acc/releases/latest")
+# Кнопка «Обновить панель» в окне обновления (app/updates.py). SELF_UPDATE=0 — только команда для сервера
+SELF_UPDATE = os.getenv("SELF_UPDATE", "1").strip().lower() not in ("0", "false", "no", "off")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 if not DATA_DIR.is_absolute():

@@ -2630,10 +2630,20 @@ function updateModal() {
     ? `<p class="support-text">Программа скачает версию для вашей системы и перезапустится — аккаунты переподключатся сами.</p>
        <button id="upd-app" class="btn primary block">${icon("download")} Обновить программу</button>`
     : `<p class="support-text">Программа обновится сама в течение 6 часов. Сразу — значок TG Panel в трее → «Проверить обновления».</p>`);
-  if (t.server) html += `<div class="section-title">Панель на сервере</div>
+  const manual = `
     <p class="support-text">Выполните в папке панели на сервере${u.docker ? " (там, где <code>docker-compose.yml</code>)" : ", затем перезапустите панель"} — аккаунты, папки и настройки сохранятся:</p>
-    <div class="upd-cmd"><code>${esc(cmd)}</code><button class="icon-btn sm" data-copy="${esc(cmd)}" title="Скопировать">${icon("copy")}</button></div>
-    <p class="muted small">После обновления сервера страница панели подхватит новую версию после перезагрузки (F5) — на всех устройствах сразу.</p>`;
+    <div class="upd-cmd"><code>${esc(cmd)}</code><button class="icon-btn sm" data-copy="${esc(cmd)}" title="Скопировать">${icon("copy")}</button></div>`;
+  if (t.server) html += `<div class="section-title">Панель на сервере</div>` + (u.self_update
+    ? `<p class="support-text">Панель скачает новую версию${u.self_update === "docker" ? ", пересоберёт контейнер" : ""} и перезапустится —
+         обычно за 1–3 минуты. Аккаунты, папки и настройки сохранятся, аккаунты переподключатся сами.</p>
+       <button id="upd-server" class="btn primary block">${icon("update")} Обновить панель</button>
+       <div id="upd-progress" class="upd-progress" hidden><div class="upd-step"><span class="spinner"></span><span class="t"></span></div>
+         <pre class="upd-log" hidden></pre></div>
+       <details class="upd-manual"><summary class="muted small">Обновить вручную</summary>${manual}</details>`
+    : manual + `<p class="muted small">После обновления сервера страница панели подхватит новую версию после перезагрузки (F5) — на всех устройствах сразу.</p>`
+      + (u.docker && u.enabled ? `<p class="muted small">Чтобы обновлять панель кнопкой, контейнеру нужен доступ к Docker — строка
+         <code>/var/run/docker.sock:/var/run/docker.sock</code> в <code>volumes</code> файла <code>docker-compose.yml</code>.
+         Она появится там после этого обновления.</p>` : ""));
   html += `<div class="section-title">GitHub</div>
     <a class="btn block" href="${esc(page)}" target="_blank" rel="noopener noreferrer" data-external>${icon("external")} Скачать с GitHub</a>
     <p class="muted small upd-hint">Описание выпуска и файлы программы для Windows, Linux и macOS</p>
@@ -2644,6 +2654,7 @@ function updateModal() {
       toast("Программа проверяет обновление — дальше она спросит сама");
       location.href = "tg-desktop/update";   // переход ловит программа (desktop/shell.py) и остаётся на странице
     });
+    body.querySelector("#upd-server")?.addEventListener("click", e => serverUpdate(e.currentTarget, body.querySelector("#upd-progress")));
     body.querySelector("[data-copy]")?.addEventListener("click", async e => {
       const ok = await copyText(e.currentTarget.dataset.copy);
       toast(ok ? "Команда скопирована" : "Не удалось скопировать — выделите команду вручную", !ok);
@@ -2654,6 +2665,47 @@ function updateModal() {
       toast("Значок скрыт до следующей версии — проверить можно в «Поддержке»");
     };
   });
+}
+// Обновление панели на сервере кнопкой (app/updates.py): сервер запускает обновление, страница следит за ходом.
+// Пока панель перезапускается, запросы не проходят; ответила новая версия — перезагружаем страницу
+async function serverUpdate(btn, box) {
+  const from = UPD.info.current, logEl = box.querySelector(".upd-log");
+  const step = (text, busy = true) => {
+    box.querySelector(".t").textContent = text;
+    box.querySelector(".spinner").hidden = !busy;
+  };
+  const showLog = text => { logEl.hidden = !text; logEl.textContent = text || ""; logEl.scrollTop = logEl.scrollHeight; };
+  const fail = (text, log) => {
+    step(text, false); showLog(log);
+    btn.disabled = false; btn.innerHTML = `${icon("update")} Попробовать снова`;
+    toast(text, true);
+  };
+  btn.disabled = true; btn.innerHTML = `${icon("update")} Обновляем…`;
+  box.hidden = false; showLog(""); step("Запускаем обновление…");
+  try { await api("api/update/install", { method: "POST" }); } catch (e) { return fail(e.message); }
+  const started = Date.now();
+  let doneAt = 0, began = false;   // began — обновление уже шло: «idle» после этого — панель перезапустилась
+  while (Date.now() - started < 20 * 60e3) {
+    await new Promise(r => setTimeout(r, 2500));
+    let p;
+    try { p = await api("api/update/progress"); } catch { began = true; step("Панель перезапускается…"); continue; }
+    if (p.current !== from) {
+      step(`Готово: версия ${p.current}. Перезагружаем страницу…`, false);
+      toast(`Панель обновлена до ${p.current}`);
+      return setTimeout(() => location.reload(), 1200);
+    }
+    if (p.state === "idle" && began) return fail("Панель перезапустилась, но версия не сменилась — новых изменений на GitHub нет");
+    began ||= p.state !== "idle";
+    showLog(p.log);
+    if (p.state === "failed") return fail(p.error || "Обновление не удалось", p.log);
+    if (p.state === "done") {
+      doneAt ||= Date.now();
+      // помощник закончил, а панель всё та же — compose не пересоздал контейнер (например, git pull ничего не принёс)
+      if (Date.now() - doneAt > 60e3) return fail("Обновление закончилось, но версия панели не сменилась — смотрите журнал", p.log);
+      step("Перезапускаем панель…");
+    } else step(p.log.includes("== docker compose") ? "Собираем и перезапускаем панель…" : "Скачиваем новую версию…");
+  }
+  fail("Обновление идёт слишком долго — проверьте сервер");
 }
 
 // ---------- встроенные боты: бот постинга и бот рекламы (app/bots.py) ----------

@@ -272,6 +272,20 @@ async def update_status(force: bool = False):
     return await updates.status(force)
 
 
+@app.post("/api/update/install", dependencies=[Depends(auth)])
+async def update_install():
+    """Обновить панель на сервере: в Docker — контейнером-помощником, без Docker — git pull и перезапуск."""
+    try:
+        return await updates.install()
+    except updates.UpdateError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/update/progress", dependencies=[Depends(auth)])
+async def update_progress():
+    return await updates.progress()
+
+
 # ---------- аккаунты ----------
 
 A = [Depends(auth)]

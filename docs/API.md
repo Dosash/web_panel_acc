@@ -23,7 +23,9 @@
 | POST | `/api/logout` | — | `{ok}` |
 | GET | `/api/session` | — | `{ok, auth, version}` — `auth: false`, если пароль отключён |
 | GET | `/api/health` | — | Без входа. `{status: "ok" \| "degraded", version, accounts, online, errors, bots}` — `degraded`, если есть аккаунты с ошибкой; `bots` — состояние подключённых ботов: `{posts: "running", ads: "off"}` (`off`, `starting`, `running`, `error`) |
-| GET | `/api/update?force=` | — | Последний релиз на GitHub: `{current, latest, available, notes, page, published_at, docker, enabled, checked_at, error}`. `available` — релиз новее этой панели; `notes` — описание релиза (Markdown); `docker` — панель в контейнере. Ответ GitHub кэшируется на 6 часов (после ошибки — 15 минут); `force=1` — спросить заново (не чаще раза в минуту). При `UPDATE_CHECK=0` — только `{current, enabled: false, available: false, docker}` |
+| GET | `/api/update?force=` | — | Последний релиз на GitHub: `{current, latest, available, notes, page, published_at, docker, enabled, checked_at, error}`. `available` — релиз новее этой панели; `notes` — описание релиза (Markdown); `docker` — панель в контейнере. Ответ GitHub кэшируется на 6 часов (после ошибки — 15 минут); `force=1` — спросить заново (не чаще раза в минуту). `self_update` — как панель обновится кнопкой: `docker` (через сокет Docker), `git` (без Docker), пусто — никак. При `UPDATE_CHECK=0` — только `{current, enabled: false, available: false, docker, self_update}` |
+| POST | `/api/update/install` | — | Обновить панель на сервере в фоне: в Docker — контейнер-помощник `<проект>-updater` делает `git pull` и `docker compose up -d --build`, без Docker — `git pull`, `pip install` и перезапуск. `400`, если обновление уже идёт или `self_update` пуст |
+| GET | `/api/update/progress` | — | Ход обновления: `{current, mode, state: idle\|running\|done\|failed, log, error}`. Панель перезапустилась с новой версией — сменился `current` |
 
 Если задан `WEB_PREFIX` (например, `/accounts`), все пути — с ним: `/accounts/api/session`, `/accounts/ws`.
 Без префикса панель тоже отвечает (для проверок на самом сервере).
