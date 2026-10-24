@@ -97,6 +97,10 @@ const ICONS = {
   arrowL: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
   arrowR: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   update: '<circle cx="12" cy="12" r="9"/><path d="M12 16.5v-9M8 11.5l4-4 4 4"/>',
+  newspaper: '<path d="M4 4h13v15a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2z"/><path d="M17 8h3v11a2 2 0 0 1-4 0"/><path d="M8 8h5M8 12h5M8 16h3"/>',
+  megaphone: '<path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17 8a5 5 0 0 1 0 8"/><path d="M8 15l1 5h2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  power: '<path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
 };
 function icon(name, cls = "") {
@@ -334,7 +338,7 @@ function renderRail() {
   box.innerHTML = "";
   for (const a of S.accounts.values()) {
     const b = document.createElement("button");
-    b.className = "rail-item acc" + (String(S.scope) === String(a.id) ? " active" : "");
+    b.className = "rail-item acc" + (String(S.scope) === String(a.id) && !BOTS.current ? " active" : "");
     b.dataset.tip = `${a.name}\n${accountLine(a) || a.full_name || ""}\n${statusText(a)}`.replace(/\n+/g, "\n").trim();
     b.style.setProperty("--c", a.color);
     b.appendChild(avatarEl(a.status === "online" ? a.id : null, "me", a.full_name || a.name, a.color));
@@ -345,7 +349,7 @@ function renderRail() {
     b.oncontextmenu = e => { e.preventDefault(); accountCtxMenu(a, e.clientX, e.clientY); };
     box.appendChild(b);
   }
-  $(".rail-item.all").classList.toggle("active", S.scope === "");
+  $(".rail-item.all").classList.toggle("active", S.scope === "" && !BOTS.current);
   renderScope();
 }
 function renderScope() {
@@ -357,6 +361,7 @@ function renderScope() {
 }
 $(".rail-item.all").onclick = () => setScope("");
 function setScope(id) {
+  closeBotView();
   S.scope = id === "" ? "" : Number(id);
   S.dialogs = [];
   renderRail();
@@ -445,6 +450,7 @@ $("#dialog-filter").addEventListener("input", renderDialogs);
 
 // ---------- чат ----------
 async function openChat(d) {
+  closeBotView();   // чат из окна (поиск, ссылка t.me) мог открыться, пока на экране бот
   S.current = { ...d, can_send: d.type !== "channel" || d.is_admin };
   S.messages = []; S.replyTo = null; S.editing = null; S.unseen = 0; atBottom = true;
   updateReplyBar(); updateToBottom();
@@ -2531,6 +2537,191 @@ function updateModal() {
   });
 }
 
+// ---------- встроенные боты: бот постинга и бот рекламы (app/bots.py) ----------
+// Кнопка в рейке открывает бота на месте списка чатов и ленты: не настроен — экран запуска
+// (токен, администраторы), работает — его собственная веб-панель во фрейме (тот же адрес и вход).
+const BOTS = { list: [], current: null, setup: false, frame: null, poll: 0 };
+const BOT_STATUS = { off: "Выключен", starting: "Запускается…", stopping: "Останавливается…", running: "Работает", error: "Ошибка запуска" };
+const BOT_ICON = { posts: "newspaper", ads: "megaphone" };
+const botInfo = name => BOTS.list.find(b => b.name === name);
+async function loadBots() {
+  try { BOTS.list = await api("api/bots"); } catch { BOTS.list = []; }
+  renderBotTools();
+}
+function renderBotTools() {
+  for (const el of document.querySelectorAll(".bot-tool")) {
+    const b = botInfo(el.dataset.bot);
+    el.classList.toggle("on", BOTS.current === el.dataset.bot);
+    const st = b?.configured ? { running: "online", starting: "connecting", stopping: "connecting", error: "error" }[b.status] || "" : "";
+    el.querySelector(".dot").className = "dot " + st;
+    if (b) el.dataset.tip = [b.title, b.username && "@" + b.username,
+      b.configured ? BOT_STATUS[b.status] : "Не подключён — нажмите, чтобы указать токен"].filter(Boolean).join("\n");
+  }
+}
+function openBot(name) {
+  if (BOTS.current !== name) { BOTS.frame = null; BOTS.setup = false; }
+  BOTS.current = name;
+  $("#app").classList.add("bot-mode");
+  $("#bot-view").hidden = false;
+  renderRail();
+  renderBotView();
+  loadBots().then(() => BOTS.current === name && renderBotView());
+}
+function closeBotView() {
+  if (!BOTS.current) return;
+  BOTS.current = null; BOTS.frame = null; BOTS.setup = false;
+  clearTimeout(BOTS.poll);
+  $("#app").classList.remove("bot-mode");
+  $("#bot-view").hidden = true;
+  $("#bot-body").innerHTML = "";
+  renderBotTools();
+  renderRail();
+}
+async function refreshBot() {
+  await loadBots();
+  if (BOTS.current) renderBotView();
+}
+function renderBotView() {
+  const b = botInfo(BOTS.current);
+  renderBotTools();
+  if (!b) return;
+  $("#bot-view .bot-ico").innerHTML = icon(BOT_ICON[b.name]);
+  $("#bot-view .bot-title").textContent = b.bot_name ? `${b.title} · ${b.bot_name}` : b.title;
+  $("#bot-view .bot-sub").textContent = [b.username && "@" + b.username, b.configured ? BOT_STATUS[b.status] : "Не подключён"]
+    .filter(Boolean).join(" · ");
+  $("#bot-reload").hidden = b.status !== "running" || BOTS.setup;
+  $("#bot-window").hidden = !b.configured || BOTS.setup;
+  $("#bot-settings").hidden = !b.configured;
+  $("#bot-settings").classList.toggle("on", BOTS.setup);
+  clearTimeout(BOTS.poll);
+  const body = $("#bot-body");
+  if (!b.configured || BOTS.setup) {
+    BOTS.frame = null;
+    if (!body.querySelector(".bot-setup")) botSetup(body, b);
+    return;
+  }
+  if (b.status === "running") {
+    if (BOTS.frame !== b.name) {
+      body.innerHTML = `<iframe class="bot-frame" src="bots/${b.name}/" title="${esc(b.title)}"></iframe>`;
+      BOTS.frame = b.name;
+    }
+    BOTS.poll = setTimeout(refreshBot, 15000);   // заметить, если бот упал или перезапускается
+    return;
+  }
+  BOTS.frame = null;
+  let html;
+  if (b.status === "starting" || b.status === "stopping") {
+    html = b.status === "starting"
+      ? `<div class="spinner"></div><h3>Бот запускается…</h3><p class="muted">Обычно это занимает несколько секунд.</p>`
+      : `<div class="spinner"></div><h3>Бот останавливается…</h3><p class="muted">Начатые публикации завершатся — это может занять до минуты.</p>`;
+  } else if (b.status === "error") {
+    html = `<span class="bot-state-ico err">${icon("bot")}</span><h3>Бот не запустился</h3>
+      ${b.error ? `<pre class="bot-error">${esc(b.error)}</pre>` : ""}
+      <p class="muted">Панель повторяет запуск сама. Проверьте токен в настройках запуска или посмотрите журнал.</p>
+      <div class="bot-actions"><button class="btn" data-act="log">${icon("file")} Журнал</button>
+      <button class="btn primary" data-act="setup">${icon("settings")} Настройки запуска</button></div>`;
+  } else {
+    html = `<span class="bot-state-ico">${icon(BOT_ICON[b.name])}</span><h3>Бот выключен</h3>
+      <p class="muted">Пока бот выключен, он не отвечает в Telegram и не публикует посты.</p>
+      <div class="bot-actions"><button class="btn primary" data-act="start">${icon("power")} Запустить</button></div>`;
+  }
+  body.innerHTML = `<div class="bot-state">${html}<div class="bot-log" hidden></div></div>`;
+  body.querySelector("[data-act=start]")?.addEventListener("click", async e => {
+    e.currentTarget.disabled = true;
+    try { await api(`api/bots/${b.name}/start`, { method: "POST" }); } catch (ex) { toast(ex.message, true); }
+    refreshBot();
+  });
+  body.querySelector("[data-act=setup]")?.addEventListener("click", () => { BOTS.setup = true; renderBotView(); });
+  body.querySelector("[data-act=log]")?.addEventListener("click", async () => {
+    const box = body.querySelector(".bot-log");
+    const { lines } = await api(`api/bots/${b.name}/log`);
+    box.textContent = lines.join("\n") || "Журнал пуст";
+    box.hidden = false;
+    box.scrollTop = box.scrollHeight;
+  });
+  if (["starting", "stopping", "error"].includes(b.status)) BOTS.poll = setTimeout(refreshBot, b.status === "error" ? 5000 : 1500);
+}
+function botSetup(body, b) {
+  const people = [...S.accounts.values()].filter(a => a.user_id);
+  const known = new Set(people.map(a => a.user_id));
+  const chosen = new Set(b.admin_ids);
+  const extra = b.admin_ids.filter(id => !known.has(id)).join(", ");
+  const adminHint = b.name === "posts"
+    ? "Только они смогут пользоваться ботом. Если никого не выбрать, владельцем станет первый, кто напишет боту /start."
+    : "Они получают заказы на модерацию и видят админ-меню бота. Покупатели рекламы — все остальные.";
+  body.innerHTML = `<div class="bot-setup"><div class="bot-card">
+    <div class="bot-hero">${icon(BOT_ICON[b.name])}</div>
+    <h2>${esc(b.title)}</h2>
+    <p class="muted">${esc(b.about)}</p>
+    <form class="form">
+      <label>Токен бота<input name="token" autocomplete="off" spellcheck="false" ${b.configured ? "" : "required"}
+        placeholder="${b.configured ? `Оставить прежний (${esc(b.token)})` : "123456789:AAE…"}"></label>
+      <p class="hint">Создайте бота в <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" data-external>@BotFather</a>
+        командой /newbot и вставьте его токен. Чтобы бот публиковал в канал, сделайте его администратором канала.</p>
+      <label>Администраторы бота</label>
+      ${people.length ? `<div class="checks">${people.map(a => `<label class="opt"><input type="checkbox" name="admin" value="${a.user_id}"
+        ${chosen.has(a.user_id) ? "checked" : ""}>${esc(a.full_name || a.name)}<span class="muted small">${esc(a.username ? "@" + a.username : String(a.user_id))}</span></label>`).join("")}</div>` : ""}
+      <input name="admin_extra" value="${esc(extra)}" placeholder="${people.length ? "Другие Telegram ID через запятую" : "Telegram ID через запятую"}">
+      <p class="hint">${adminHint}</p>
+      <label>Часовой пояс<input name="timezone" value="${esc(b.timezone)}" placeholder="Europe/Moscow"></label>
+      <div class="error"></div>
+      <div class="row">
+        ${b.configured ? `<button type="button" class="btn" data-act="cancel">Отмена</button>` : ""}
+        <button class="btn primary" type="submit">${icon("power")} ${b.configured ? "Сохранить и перезапустить" : "Подключить и запустить"}</button>
+      </div>
+      ${b.configured && b.status !== "off" ? `<button type="button" class="btn block danger" data-act="stop">Выключить бота</button>` : ""}
+      ${b.configured ? `<p class="hint">Цены, каналы, оплата, пароль и остальное настраиваются в панели самого бота.</p>` : ""}
+    </form></div></div>`;
+  hydrateIcons(body);
+  body.querySelector("[data-act=cancel]")?.addEventListener("click", () => { BOTS.setup = false; renderBotView(); });
+  body.querySelector("[data-act=stop]")?.addEventListener("click", async e => {
+    e.currentTarget.disabled = true;
+    try { await api(`api/bots/${b.name}/stop`, { method: "POST" }); toast("Бот выключен"); } catch (ex) { toast(ex.message, true); }
+    BOTS.setup = false; refreshBot();
+  });
+  formSubmit(body, async fd => {
+    const ids = [...fd.getAll("admin"), ...String(fd.get("admin_extra")).split(/[\s,;]+/)].filter(Boolean);
+    if (ids.some(x => !/^\d{3,15}$/.test(x))) throw new Error("Telegram ID — это число, например 123456789");
+    const token = String(fd.get("token")).trim();
+    const res = await api(`api/bots/${b.name}`, { method: "PUT", body: {
+      token: token || null, admin_ids: ids.map(Number), timezone: String(fd.get("timezone")).trim() } });
+    BOTS.list = BOTS.list.map(x => x.name === res.name ? res : x);
+    BOTS.setup = false; BOTS.frame = null;
+    toast(res.username ? `@${res.username} запускается` : "Бот запускается");
+    renderBotView();
+  });
+}
+// Панель бота в отдельном окне: в браузере — окно-попап (одно на бота, повторно — то же окно),
+// в программе для ПК окно открывает сама программа (desktop/shell.py, ViewerWindow)
+function openBotWindow(name) {
+  const w = window.open(`bots/${name}/`, `tgpanel-bot-${name}`, "popup,width=1280,height=860");
+  if (!w) toast("Браузер не дал открыть окно — разрешите всплывающие окна для панели", true);
+}
+function botCtxMenu(name, x, y) {
+  const b = botInfo(name);
+  if (!b) return;
+  const items = [
+    { icon: BOT_ICON[name], label: "Открыть в панели", run: () => openBot(name) },
+  ];
+  if (b.configured) {
+    items.push({ icon: "external", label: "Открыть в отдельном окне", run: () => openBotWindow(name) });
+    if (!desktopApp()) items.push({ icon: "link", label: "Открыть в новой вкладке", run: () => window.open(`bots/${name}/`, "_blank") });
+    items.push("sep", { icon: "settings", label: "Настройки запуска", run: () => { openBot(name); BOTS.setup = true; renderBotView(); } });
+    items.push(b.status === "off"
+      ? { icon: "power", label: "Запустить", run: async () => { await api(`api/bots/${name}/start`, { method: "POST" }); refreshBot(); } }
+      : { icon: "power", label: "Выключить", danger: true, run: async () => {
+          await api(`api/bots/${name}/stop`, { method: "POST" }); toast("Бот выключен"); refreshBot(); } });
+  }
+  ctxMenu(x, y, items, [b.title, b.username && "@" + b.username].filter(Boolean).join(" · "));
+}
+for (const el of document.querySelectorAll(".bot-tool")) {
+  el.onclick = () => openBot(el.dataset.bot);
+  el.oncontextmenu = e => { e.preventDefault(); botCtxMenu(el.dataset.bot, e.clientX, e.clientY); };
+}
+$("#bot-window").onclick = () => openBotWindow(BOTS.current);
+$("#bot-settings").onclick = () => { BOTS.setup = !BOTS.setup; renderBotView(); };
+$("#bot-reload").onclick = () => { const f = $("#bot-body .bot-frame"); if (f) f.src = f.src; };
+
 // ---------- невидимка и тема ----------
 function renderGhost() {
   const b = $("#toggle-ghost");
@@ -2542,6 +2733,9 @@ $("#toggle-ghost").onclick = () => { S.ghost = !S.ghost; writePref("ghost", S.gh
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   writePref("theme", t);
+  writePref("panel-theme", t);   // тот же ключ читают панели встроенных ботов
+  const frame = $("#bot-body .bot-frame");
+  try { if (frame?.contentDocument) frame.contentDocument.documentElement.dataset.theme = t; } catch { /* ещё грузится */ }
   $("#toggle-theme").innerHTML = icon(t === "light" ? "moon" : "sun");
   $('meta[name="theme-color"]').content = t === "light" ? "#eef2f8" : "#0b1220";
 }
@@ -2558,9 +2752,10 @@ async function start() {
   $("#login").hidden = true; $("#app").hidden = false;
   $("#logout").hidden = !sess.auth;
   S.version = sess.version || "";
-  $("#hub-link").hidden = !sess.hub_url;
-  if (sess.hub_url) $("#hub-link").href = sess.hub_url;
-  await Promise.all([loadAccounts(), loadFolders()]);
+  await Promise.all([loadAccounts(), loadFolders(), loadBots()]);
+  // #bot=posts|ads — сразу открыть бота (сюда ведут старые адреса /posts/ и /ads/)
+  const want = /^#bot=(\w+)$/.exec(location.hash)?.[1];
+  if (want && botInfo(want)) { history.replaceState(null, "", location.pathname + location.search); openBot(want); }
   await loadDialogs();
   if (!started) {
     started = true;

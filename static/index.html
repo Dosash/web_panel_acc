@@ -33,7 +33,8 @@
       <div id="rail-accounts" class="rail-accounts"></div>
       <button id="add-account" class="rail-item add" data-tip="Добавить аккаунт"><span data-icon="plus"></span></button>
       <div class="rail-spacer"></div>
-      <a id="hub-link" class="rail-tool" data-tip="Все панели" aria-label="Все панели" hidden><span data-icon="grid"></span></a>
+      <button class="rail-tool bot-tool" data-bot="posts" data-tip="Бот постинга" aria-label="Бот постинга"><span data-icon="newspaper"></span><span class="dot"></span></button>
+      <button class="rail-tool bot-tool" data-bot="ads" data-tip="Бот рекламы" aria-label="Бот рекламы"><span data-icon="megaphone"></span><span class="dot"></span></button>
       <button id="toggle-ghost" class="rail-tool" data-tip="Режим невидимки"></button>
       <button id="toggle-theme" class="rail-tool" data-tip="Сменить тему"></button>
       <button id="support" class="rail-tool support" data-tip="Поддержка и помощь проекту" aria-label="Поддержка"><span data-icon="dollar"></span></button>
@@ -93,6 +94,18 @@
         </form>
         <div id="readonly-bar" class="readonly-bar" hidden><span data-icon="lock"></span> Только чтение — вы не администратор канала</div>
       </div>
+    </section>
+
+    <!-- Встроенный бот: настройка или его веб-панель (app/bots.py) -->
+    <section id="bot-view" class="bot-view" hidden>
+      <header class="bot-head">
+        <span class="bot-ico"></span>
+        <div class="bot-meta"><div class="bot-title"></div><div class="bot-sub muted"></div></div>
+        <button id="bot-reload" class="icon-btn" title="Обновить страницу бота"><span data-icon="refresh"></span></button>
+        <button id="bot-window" class="icon-btn" title="Открыть в отдельном окне"><span data-icon="external"></span></button>
+        <button id="bot-settings" class="icon-btn" title="Запуск бота: токен, администраторы"><span data-icon="settings"></span></button>
+      </header>
+      <div id="bot-body" class="bot-body"></div>
     </section>
   </main>
 

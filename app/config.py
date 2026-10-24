@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-VERSION = "0.11.3"
+VERSION = "0.12.0"
 
 
 def _env(name: str, old: str, default: str = "") -> str:
@@ -32,10 +32,6 @@ WEB_HOST = _env("WEB_HOST", "HOST", "127.0.0.1")
 WEB_PORT = int(_env("WEB_PORT", "PORT", "8080"))
 # Путь панели, если она открыта не в корне сайта (за общим nginx): /accounts → http://сервер/accounts/
 WEB_PREFIX = normalize_prefix(os.getenv("WEB_PREFIX", ""))
-# Ссылка «Все панели» в рейке, когда за одним nginx несколько панелей. Пусто — без ссылки.
-HUB_URL = os.getenv("HUB_URL", "").strip()
-if HUB_URL and not re.match(r"(/|https?://)", HUB_URL):
-    raise ValueError(f"HUB_URL «{HUB_URL}»: укажите путь (например, /) или адрес http(s)://…")
 # Проверка новой версии на GitHub (значок «Вышло обновление»). UPDATE_CHECK=0 — не проверять.
 # Адрес можно подменить — для проверки на своём сервере (TG_PANEL_UPDATE_URL — то же для программы)
 UPDATE_CHECK = os.getenv("UPDATE_CHECK", "1").strip().lower() not in ("0", "false", "no", "off")

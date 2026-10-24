@@ -17,7 +17,7 @@
 ## Модули
 
 ### `app/config.py`
-Читает `.env` (`WEB_HOST`, `WEB_PORT`, `WEB_PASSWORD`, `WEB_PREFIX`, `HUB_URL`, `DATA_DIR`, `UPDATE_CHECK`; старые имена
+Читает `.env` (`WEB_HOST`, `WEB_PORT`, `WEB_PASSWORD`, `WEB_PREFIX`, `DATA_DIR`, `UPDATE_CHECK`; старые имена
 `HOST`, `PORT`, `PANEL_PASSWORD` — как запасные), создаёт папки `data/`, `data/cache/`, `data/tmp/`. При первом запуске генерирует
 `data/secret.key` (ключ Fernet для сессий) и `data/cookie.key` (подпись cookie), права `600`.
 
@@ -80,6 +80,25 @@ FastAPI-приложение: REST API (см. [API.md](API.md)), WebSocket `/ws`
   «аккаунт не подключён» (`RuntimeError`) в `409`.
 - Кэш медиа: `data/cache/m_<aid>_<chat>_<msg>[_t].<ext>`, аватары `a_<aid>_<peer>.jpg`
   (TTL сутки), отметка «фото нет» `a_<aid>_<peer>.none` (TTL сутки).
+
+### `app/bots.py` — встроенные боты
+Бот постинга (`bots/posts`, бывший post_channel_bot) и бот рекламы (`bots/ads`, бывший ads_chanel_bot) — aiogram 3
++ aiohttp + SQLite, у каждого своя веб-панель. Панель запускает бота отдельным процессом
+(`python -m bots posts|ads`, в программе — `tg-panel --bot posts|ads`) на свободном порту `127.0.0.1` и с
+`WEB_PREFIX`/`PANEL_PREFIX` = `<WEB_PREFIX>/bots/<имя>`; переменные окружения задаёт `BotProcess._env`, `.env` панели
+бот не читает. Упавший бот перезапускается (паузы 2…60 с). stdin бота — канал от панели: панель завершилась
+(даже `kill -9`) — бот видит конец stdin и выходит, второй процесс с тем же токеном не остаётся.
+- Настройка запуска — `data/bots/<имя>/bot.json` (токен, администраторы, часовой пояс, `enabled`), там же `bot.db`,
+  `uploads/` и `bot.log`. Остальные настройки (цены, оплата, каналы, смена токена) — в панели самого бота, в его БД.
+- Порт бота открыт только на `127.0.0.1` и только с ключом: на каждый запуск панель передаёт боту
+  `TG_PANEL_KEY`, а прокси добавляет его в заголовок `X-TG-Panel-Key` (проверка — в `bots/posts/web/__init__.py`
+  и `guard` в `bots/ads/web.py`). Запуск/остановка — под замком на бота; `reconfigure` после остановки удаляет из
+  базы бота токен/администраторов/пояс, заданные в его панели, если их сменили в TG Panel.
+- `main.py` проксирует `/bots/<имя>/…` на порт бота (aiohttp, потоком, без распаковки сжатия) под тем же
+  входом, что и панель; интерфейс открывает панель бота во фрейме — поэтому в `bots/` `X-Frame-Options: SAMEORIGIN`.
+- Оформление: обе панели ботов на одной системе токенов (`--bg`, `--surface`, `--accent`, `--radius`…);
+  `static/bots-theme.css` задаёт им значения палитры TG Panel и подключается последним в их `index.html`
+  (адрес `../../bots-theme.css` от `<панель>/bots/<имя>/`). Тема — общий ключ `panel-theme` в localStorage.
 
 ### `static/` — интерфейс
 Без сборки и фреймворков: `index.html` (каркас), `app.css` (дизайн-система), `app.js` (логика).

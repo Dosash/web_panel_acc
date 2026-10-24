@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
 
 COPY app ./app
 COPY static ./static
+COPY bots ./bots
 
 # база, ключ шифрования сессий и кэш — в томе ./data
 VOLUME ["/app/data"]

@@ -1,5 +1,5 @@
 # Сборка десктоп-приложения под Linux, Windows и macOS (Apple Silicon и Intel).
-# Запуск: правки в том, что входит в программу (desktop/, app/, static/, requirements.txt), тег v* или вручную
+# Запуск: правки в том, что входит в программу (desktop/, app/, bots/, static/, requirements.txt), тег v* или вручную
 # (Actions → «Десктоп-приложение» → Run workflow). Готовые файлы — в артефактах запуска.
 #
 # Релиз: если в main пришла новая версия (VERSION в app/config.py, тега vВЕРСИЯ ещё нет) или запушен тег v*,
@@ -11,9 +11,9 @@ on:
   push:
     tags: ["v*"]
     branches: [main]
-    paths: ["desktop/**", "app/**", "static/**", "requirements.txt", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "app/**", "bots/**", "static/**", "requirements.txt", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["desktop/**", "app/**", "static/**", "requirements.txt", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "app/**", "bots/**", "static/**", "requirements.txt", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:

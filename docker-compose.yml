@@ -7,14 +7,15 @@ services:
     image: tg-panel:latest
     container_name: tg-panel
     restart: unless-stopped
-    stop_grace_period: 30s
+    # встроенный бот постинга даёт идущим публикациям до ~72 с на завершение (app/bots.py)
+    stop_grace_period: 90s
     network_mode: host
     env_file: .env
     environment:
       DATA_DIR: /app/data
     volumes:
       - ./data:/app/data
-    mem_limit: 512m
+    mem_limit: 1g
     logging:
       driver: json-file
       options:

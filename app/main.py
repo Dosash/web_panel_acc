@@ -10,16 +10,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import aiohttp
+import yarl
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 from telethon import functions, types
 from telethon.errors import BotResponseTimeoutError, RPCError
 
-from . import poster, storage, updates
-from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, HUB_URL, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
+from . import bots, poster, storage, updates
+from .config import BASE_DIR, CACHE_DIR, COOKIE_SECRET, TMP_DIR, VERSION, WEB_PASSWORD, WEB_PREFIX
 from .manager import MUTE_FOREVER, Manager, dialog_dict, display_name, message_dict, parse_proxy, peer_type, username
 from .tdata_import import ImportError_, convert, save_upload
 
@@ -44,10 +47,13 @@ async def lifespan(app: FastAPI):
     log.info("TG Panel %s: путь %s", VERSION, (WEB_PREFIX or "") + "/")
     storage.init_db()
     task = asyncio.create_task(manager.start_all())
+    await bots.start_all()
     yield
     task.cancel()
+    # боты и аккаунты — параллельно: программа для ПК ждёт остановку сервера недолго (desktop/server.py)
+    await asyncio.gather(bots.stop_all(), manager.stop_all(), return_exceptions=True)
+    await close_bot_proxy()
     await poster.close_all()
-    await manager.stop_all()
 
 
 app = FastAPI(title="TG Panel", version=VERSION, lifespan=lifespan)
@@ -131,6 +137,11 @@ async def key_error(_: Request, e: KeyError):
     return JSONResponse({"detail": f"Аккаунт {e} не найден"}, status_code=404)
 
 
+@app.exception_handler(bots.NoSuchBot)
+async def no_such_bot(_: Request, e: bots.NoSuchBot):
+    return JSONResponse({"detail": f"Нет такого бота: {e}"}, status_code=404)
+
+
 @app.exception_handler(ValueError)
 async def value_error(_: Request, e: ValueError):
     return JSONResponse({"detail": str(e)}, status_code=400)
@@ -179,7 +190,7 @@ async def logout():
 
 @app.get("/api/session", dependencies=[Depends(auth)])
 async def session():
-    return {"ok": True, "auth": AUTH_ENABLED, "version": VERSION, "hub_url": HUB_URL}
+    return {"ok": True, "auth": AUTH_ENABLED, "version": VERSION}
 
 
 @app.get("/api/health")
@@ -188,7 +199,8 @@ async def health():
     states = [live.status for live in manager.live.values()]
     errors = states.count("error")
     return {"status": "degraded" if errors else "ok", "version": VERSION,
-            "accounts": len(storage.list_accounts()), "online": states.count("online"), "errors": errors}
+            "accounts": len(storage.list_accounts()), "online": states.count("online"), "errors": errors,
+            "bots": {name: bot.status for name, bot in bots.bots.items() if bot.configured}}
 
 
 @app.get("/api/update", dependencies=[Depends(auth)])
@@ -1322,6 +1334,155 @@ async def prolong_webapp(aid: int, body: ProlongIn):
     peer = await manager.entity(aid, body.chat_id) if body.chat_id else bot
     await manager.client(aid)(functions.messages.ProlongWebViewRequest(peer=peer, bot=bot, query_id=int(body.query_id)))
     return {"ok": True}
+
+
+# ---------- встроенные боты (app/bots.py) ----------
+
+@app.get("/api/bots", dependencies=A)
+async def bots_list():
+    return [bot.public() for bot in bots.bots.values()]
+
+
+class BotSetupIn(BaseModel):
+    token: str | None = None  # None — оставить прежний
+    admin_ids: list[int] = []
+    timezone: str = "Europe/Moscow"
+
+
+@app.put("/api/bots/{name}", dependencies=A)
+async def bot_setup(name: str, body: BotSetupIn, request: Request):
+    """Настройка для запуска: токен (проверяется у Telegram), администраторы, часовой пояс. Сохраняет и
+    (пере)запускает бота. Остальное — в собственной панели бота."""
+    bot = bots.get(name)
+    changes: dict = {"admin_ids": sorted(set(i for i in body.admin_ids if i > 0)), "enabled": True}
+    # адрес панели бота, как его видит браузер, — бот показывает его в Telegram («Веб-панель: …»)
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host:
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        changes["public_url"] = f"{scheme}://{host}{WEB_PREFIX}/bots/{name}/"
+    if body.timezone.strip():
+        from zoneinfo import ZoneInfo
+        try:
+            ZoneInfo(body.timezone.strip())
+        except (ValueError, KeyError):
+            raise ValueError(f"Неизвестный часовой пояс «{body.timezone}» (пример: Europe/Moscow)")
+        changes["timezone"] = body.timezone.strip()
+    if body.token is not None and body.token.strip():
+        token = body.token.strip()
+        other = next((b for b in bots.bots.values() if b is not bot and b.cfg.get("token") == token), None)
+        if other:
+            raise ValueError(f"Этот токен уже у бота «{other.kind.title}» — одному боту нельзя работать в двух местах")
+        me = await bots.check_token(token)
+        changes.update(token=token, username=me.get("username", ""), bot_name=me.get("first_name", ""))
+    elif not bot.configured:
+        raise ValueError("Укажите токен бота от @BotFather")
+    bots.in_background(bot.reconfigure(changes))
+    return {**bot.public(), **{k: v for k, v in changes.items() if k in ("admin_ids", "timezone", "username", "bot_name")},
+            "configured": True, "enabled": True, "status": "starting", "error": ""}
+
+
+@app.post("/api/bots/{name}/start", dependencies=A)
+async def bot_start(name: str):
+    bot = bots.get(name)
+    if not bot.configured:
+        raise ValueError("Сначала укажите токен бота")
+    bot.save(enabled=True)
+    await bot.start()
+    return bot.public()
+
+
+@app.post("/api/bots/{name}/stop", dependencies=A)
+async def bot_stop(name: str):
+    bot = bots.get(name)
+    bot.save(enabled=False)
+    bots.in_background(bot.stop())
+    return {**bot.public(), "enabled": False, "status": "stopping"}
+
+
+@app.get("/api/bots/{name}/log", dependencies=A)
+async def bot_log(name: str):
+    return {"lines": list(bots.get(name).tail)[-100:]}
+
+
+_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+        "transfer-encoding", "upgrade", "host", "content-length"}
+_proxy_session = None
+
+
+async def close_bot_proxy() -> None:
+    global _proxy_session
+    if _proxy_session:
+        await _proxy_session.close()
+        _proxy_session = None
+
+
+def _bot_page(title: str, text: str, status: int = 503) -> HTMLResponse:
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><body style='font:15px system-ui;display:grid;place-items:center;"
+        f"height:90vh;color:#888;text-align:center'><div><h3>{title}</h3><p>{text}</p></div>", status_code=status)
+
+
+@app.api_route("/bots/{name}", methods=["GET", "HEAD"])
+async def bot_root(name: str):
+    return RedirectResponse(f"{WEB_PREFIX}/bots/{name}/")
+
+
+@app.api_route("/bots/{name}/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+async def bot_proxy(name: str, path: str, request: Request):
+    """Веб-панель бота через панель: тот же вход, тот же адрес — её можно открыть во фрейме."""
+    global _proxy_session
+    bot = bots.get(name)
+    # вебхук оплаты xRocket приходит без входа в панель — подпись запроса проверяет сам бот
+    hook = name == "ads" and path.startswith("hook/") and request.method == "POST"
+    if not hook and not is_authed(request.cookies.get(COOKIE)):
+        return _bot_page("Нужен вход", "Войдите в TG Panel и откройте бота снова.", 401)
+    if bot.status != "running" or not bot.port:
+        what = {"starting": "Бот запускается — подождите несколько секунд.",
+                "error": "Бот не запустился. Откройте его настройки в TG Panel."}.get(bot.status, "Бот выключен.")
+        return _bot_page(bot.kind.title, what)
+    if _proxy_session is None:
+        # auto_decompress=False: сжатый ответ уходит браузеру как есть, вместе с Content-Encoding
+        _proxy_session = aiohttp.ClientSession(auto_decompress=False, timeout=aiohttp.ClientTimeout(
+            total=None, sock_connect=5, sock_read=600))
+    # путь как его прислал браузер, не раскодированный: %2F, %3F, %23 в имени файла остаются собой
+    raw_path = request.scope.get("raw_path", b"").decode("latin-1") or request.url.path
+    tail = raw_path.split("/bots/" + name + "/", 1)[-1]
+    url = f"http://127.0.0.1:{bot.port}{bot.prefix}/{tail}"
+    if request.url.query:
+        url += "?" + request.url.query
+    headers = [(k, v) for k, v in request.headers.items()
+               if (k.lower() not in _HOP or k.lower() == "content-length") and k.lower() != "x-tg-panel-key"]
+    headers.append(("X-TG-Panel-Key", bot.key))
+    body = request.stream() if request.method in ("POST", "PUT", "PATCH", "DELETE") else None
+    try:
+        upstream = await _proxy_session.request(request.method, yarl.URL(url, encoded=True), headers=headers,
+                                                data=body, allow_redirects=False)
+    except aiohttp.ClientError:
+        return _bot_page(bot.kind.title, "Бот не отвечает — возможно, он перезапускается. Обновите страницу.", 502)
+
+    async def stream():
+        try:
+            async for chunk in upstream.content.iter_chunked(64 * 1024):
+                yield chunk
+        finally:
+            upstream.release()
+
+    origin = f"http://127.0.0.1:{bot.port}"
+    try:
+        raw = []
+        for k, v in upstream.headers.items():
+            if k.lower() in _HOP and k.lower() != "content-length":
+                continue
+            if k.lower() == "location" and v.startswith(origin):
+                v = v[len(origin):]
+            raw.append((k.lower().encode("latin-1"), v.encode("latin-1")))
+        # release и после ответа: если браузер ушёл раньше, чем начался поток, соединение не повиснет
+        response = StreamingResponse(stream(), status_code=upstream.status, background=BackgroundTask(upstream.release))
+        response.raw_headers = raw
+        return response
+    except Exception:
+        upstream.release()
+        raise
 
 
 # ---------- realtime ----------

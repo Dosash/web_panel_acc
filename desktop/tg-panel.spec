@@ -3,7 +3,7 @@ import re
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 HERE = Path(SPECPATH)
 ROOT = HERE.parent
@@ -16,10 +16,15 @@ a = Analysis(
     pathex=[str(ROOT), str(HERE)],
     # static/ рядом с app/: app.config берёт BASE_DIR как папку над app/ — в сборке это корень распаковки
     datas=[(str(ROOT / "static"), "static"), (str(HERE / "icon.svg"), "."),
-           (str(HERE / "build" / "version.txt"), ".")],
+           (str(HERE / "build" / "version.txt"), "."),
+           # веб-панели встроенных ботов (bots/): их static ищется рядом с модулем
+           (str(ROOT / "bots" / "posts" / "web" / "static"), "bots/posts/web/static"),
+           (str(ROOT / "bots" / "ads" / "web_static"), "bots/ads/web_static")]
+    + collect_data_files("tzdata"),
     # uvicorn и Telethon подгружают модули по имени — анализ импортов их не видит
     hiddenimports=collect_submodules("uvicorn") + collect_submodules("app") + collect_submodules("telethon")
-    + collect_submodules("opentele") + ["PyQt5.QtSvg", "PyQt5.QtNetwork"],
+    + collect_submodules("opentele") + collect_submodules("bots") + collect_submodules("aiogram")
+    + ["aiosqlite", "PyQt5.QtSvg", "PyQt5.QtNetwork"],
     # PIL Telethon использует, только если он установлен; watchfiles — перезапуск uvicorn при правках
     excludes=["tkinter", "PIL", "watchfiles"],
     noarchive=False,
