@@ -142,3 +142,20 @@ def test_websocket_rejects_guests(client):
     with pytest.raises(WebSocketDisconnect) as e, client.websocket_connect("/ws"):
         pass
     assert e.value.code == 4401
+
+
+def test_import_sessions_validation(authed):
+    r = authed.post("/api/accounts/import-sessions", data={"name": "x"},
+                    files=[("files", ("notes.txt", b"hello", "text/plain"))])
+    assert r.status_code == 400 and "нет сессии" in r.json()["detail"]
+    r = authed.post("/api/accounts/import-sessions", data={"name": "x"},
+                    files=[("files", ("a.session", b"garbage", "application/octet-stream"))])
+    assert r.status_code == 400
+    r = authed.post("/api/accounts/import-sessions", data={"name": "x"},
+                    files=[("files", ("a.session", b"SQLite format 3\x00" + b"\x00" * 50, "application/octet-stream"))])
+    assert r.status_code == 400 and "повреждён" in r.json()["detail"]
+
+
+def test_import_sessions_requires_login(client):
+    r = client.post("/api/accounts/import-sessions", files=[("files", ("a.session", b"x", "application/octet-stream"))])
+    assert r.status_code == 401
