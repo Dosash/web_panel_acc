@@ -972,7 +972,13 @@ fn after_update_notice(app: &AppHandle) {
         return;
     }
     let notes = state["pending"]["notes"].as_str().filter(|_| state["pending"]["version"] == VERSION).unwrap_or_default();
-    let text = short_notes(notes);
+    let mut text = short_notes(notes);
+    if text.is_empty() && last.is_none() {
+        // с программы на PyQt5: описания релиза у неё не было
+        text = "Программа для Windows теперь на WebView2: быстрее запускается и в разы меньше. Режим, адрес сервера \
+                и настройки сохранены."
+            .into();
+    }
     let banner = json!({"id": "updated", "title": format!("Обновлено до TG Panel {VERSION}"), "text": text, "timeout": 25000});
     log::info!("Программа обновлена до {VERSION}");
     if main_visible() {

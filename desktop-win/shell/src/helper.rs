@@ -272,6 +272,13 @@ fn install(plan: &Plan, log: &Log) -> (Outcome, PathBuf) {
     ];
     if plan.to_user {
         args.push("/CURRENTUSER".into());
+    } else {
+        // обновляем именно ту копию, что работала: её папка и её режим установки. Иначе Inno Setup по AppId
+        // мог бы взять другую установку (например, «для всех», если программа стоит ещё и для пользователя)
+        let all_users = winreg::get_string(winreg::HKLM, UNINSTALL_KEY, "InstallLocation")
+            .is_some_and(|dir| same_dir(Path::new(&dir), &plan.app_dir));
+        args.push(if all_users { "/ALLUSERS" } else { "/CURRENTUSER" }.into());
+        args.push(format!("/DIR={}", plan.app_dir.display()));
     }
     log.info(&format!("Установка: {} /VERYSILENT", plan.file.display()));
     let code = Command::new(&plan.file).args(&args).status().map(|s| s.code().unwrap_or(-1));
@@ -283,6 +290,11 @@ fn install(plan: &Plan, log: &Log) -> (Outcome, PathBuf) {
         Ok(c) => (Outcome::Failed { reason: format!("установщик завершился с кодом {c}, журнал: {}", setup_log.display()), bad: false }, new_exe),
         Err(e) => (Outcome::Failed { reason: format!("установщик не запустился: {e}"), bad: false }, new_exe),
     }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| p.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase();
+    norm(a) == norm(b)
 }
 
 fn user_install_exe() -> PathBuf {
@@ -357,6 +369,7 @@ fn rollback(plan: &Plan, backup: &Path, log: &Log) {
     let exclude = plan.app_dir.join("data");
     if robocopy(backup, &plan.app_dir, true, &exclude).is_ok() {
         log.info(&format!("Прежняя версия {} восстановлена", plan.prev_version));
+        restore_uninstall_version(plan);
         return;
     }
     // папка «для всех» (Program Files) — восстановить можно только с правами администратора
@@ -367,6 +380,18 @@ fn rollback(plan: &Plan, backup: &Path, log: &Log) {
     match run_elevated(Path::new("robocopy"), &params) {
         Some(c) if c < 8 => log.info(&format!("Прежняя версия {} восстановлена (с правами администратора)", plan.prev_version)),
         other => log.error(&format!("Не удалось вернуть прежнюю версию (robocopy {other:?}) — переустановите программу")),
+    }
+}
+
+/// Установщик новой версии успел записать её номер в «Приложения» Windows — после отката возвращаем прежний
+/// (запись «для текущего пользователя»; «для всех» без прав администратора не изменить).
+fn restore_uninstall_version(plan: &Plan) {
+    if plan.kind != "setup" || winreg::get_string(HKCU, UNINSTALL_KEY, "InstallLocation").is_none_or(|d| !same_dir(Path::new(&d), &plan.app_dir)) {
+        return;
+    }
+    let _ = winreg::set_string(HKCU, UNINSTALL_KEY, "DisplayVersion", &plan.prev_version);
+    if let Some(name) = winreg::get_string(HKCU, UNINSTALL_KEY, "DisplayName") {
+        let _ = winreg::set_string(HKCU, UNINSTALL_KEY, "DisplayName", &name.replace(&plan.version, &plan.prev_version));
     }
 }
 

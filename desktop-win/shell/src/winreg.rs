@@ -3,11 +3,12 @@
 use windows::core::HSTRING;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
-    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ,
-    RRF_SUBKEY_WOW6464KEY,
+    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ,
+    RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY,
 };
 
 pub const HKCU: HKEY = HKEY_CURRENT_USER;
+pub const HKLM: HKEY = HKEY_LOCAL_MACHINE;
 
 pub fn get_string(root: HKEY, key: &str, name: &str) -> Option<String> {
     let (key, name) = (HSTRING::from(key), HSTRING::from(name));

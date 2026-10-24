@@ -80,9 +80,7 @@ unsafe fn attach_handlers(app: AppHandle, label: String, kind: Kind, controller:
                 args.PhysicalKeyStatus(&mut status)?;
                 let repeat = status.WasKeyDown.as_bool();
                 let down = |k: u16| GetKeyState(k as i32) < 0;
-                let (ctrl, shift, alt) = (down(VK_CONTROL.0), down(VK_SHIFT.0), down(VK_MENU.0));
-                log::debug!("клавиша {vk:#x} ctrl={ctrl} shift={shift} alt={alt} повтор={repeat}");
-                if let Some(action) = key_action(kind, vk, ctrl, shift, alt) {
+                let (ctrl, shift, alt) = (down(VK_CONTROL.0), down(VK_SHIFT.0), down(VK_MENU.0));                if let Some(action) = key_action(kind, vk, ctrl, shift, alt) {
                     args.SetHandled(true)?;
                     if !repeat || matches!(action, app::Key::ZoomIn | app::Key::ZoomOut) {
                         let (app_, label) = (app.clone(), label.clone());
