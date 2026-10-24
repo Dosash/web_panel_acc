@@ -142,3 +142,10 @@ data/              база, ключи, кэш (в .gitignore)
 - События WebSocket видны во вкладке Network → WS в DevTools браузера.
 - Если аккаунт в статусе `error` с «Сессия недействительна» — сеанс завершён в Telegram;
   загрузите tdata заново (сессия обновится в том же аккаунте).
+
+## Демо-ролик
+
+`docs/video/demo.mp4` собирается из сцены `docs/video/src/` (HTML/CSS/JS на стилях `static/app.css`):
+`uv run --with playwright python docs/video/src/render.py --out docs/video/demo.mp4` — около 10 минут,
+нужны Chromium и ffmpeg. После заметных изменений интерфейса ролик стоит пересобрать; раскадровка и устройство
+сцены — в [docs/video/src/README.md](video/src/README.md).
