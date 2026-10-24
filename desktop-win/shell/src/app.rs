@@ -31,6 +31,8 @@ pub struct Shell {
     start_hidden: bool,
     /// запуск после обновления помощником: с какой версии и когда начался выход прежней
     updated_from: Option<(String, u128)>,
+    /// режим был выбран до этого запуска (в том числе прежней программой на PyQt5)
+    was_configured: bool,
     settings: Mutex<Settings>,
     mode: Mutex<String>,
     base: Mutex<Option<Url>>,
@@ -58,6 +60,8 @@ struct Ui {
     tray_hint: bool,
     /// окно было развёрнуто на весь экран — развернуть при первом показе
     maximize_on_show: bool,
+    /// что последним сообщили странице (window.__tgDesktopActive)
+    active: Option<bool>,
 }
 
 static SHELL: OnceLock<Shell> = OnceLock::new();
@@ -162,6 +166,7 @@ pub fn run(args: Args) {
         log_path,
         start_hidden: args.hidden,
         updated_from: args.updated_from,
+        was_configured: !mode.is_empty(),
         settings: Mutex::new(settings),
         mode: Mutex::new(mode),
         base: Mutex::new(None),
@@ -193,14 +198,14 @@ pub fn run(args: Args) {
             return;
         }
     };
-    app.run(|app, event| match event {
+    app.run(|_app, event| match event {
         // окна не закрываются, а прячутся в трей; выход — только через quit()
         RunEvent::ExitRequested { code: None, api, .. } if !quitting() => api.prevent_exit(),
         RunEvent::Exit => {
+            // выход не через quit() (например, завершение сеанса Windows) — всё равно отключить аккаунты
             if let Some(server) = shell().server.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 server.stop(server::STOP_TIMEOUT);
             }
-            let _ = app;
         }
         _ => {}
     });
@@ -264,7 +269,17 @@ fn webview_dir() -> PathBuf {
     shell().data.join("webview2")
 }
 
+/// Окна WebView2 в Tauri под Windows создаются только не из главного потока (иначе build() ждёт сам себя).
+fn in_background(app: &AppHandle, f: impl FnOnce(&AppHandle) + Send + 'static) {
+    let app = app.clone();
+    std::thread::spawn(move || f(&app));
+}
+
 fn start_main(app: &AppHandle) {
+    in_background(app, start_main_window);
+}
+
+fn start_main_window(app: &AppHandle) {
     let remote = mode() == REMOTE;
     let start = if remote {
         let url = server_url().and_then(|u| Url::parse(&u).ok());
@@ -299,8 +314,9 @@ fn start_main(app: &AppHandle) {
             mark_healthy(&app);
         });
     }
-    updater::start(app);
+    // сначала «Обновлено до» (описание — из state.json → pending), потом обновлятор: он убирает отработавшее
     after_update_notice(app);
+    updater::start(app);
 }
 
 fn create_main(app: &AppHandle, url: Option<Url>) -> tauri::Result<WebviewWindow> {
@@ -327,8 +343,11 @@ fn create_main(app: &AppHandle, url: Option<Url>) -> tauri::Result<WebviewWindow
 fn viewer_builder<'a>(app: &'a AppHandle, label: &str, url: WebviewUrl) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     let (nav, popup) = (app.clone(), app.clone());
     let label_ = label.to_string();
+    // заголовок окна — в теме панели (её последняя тема; до загрузки — тёмная, как экран «Запуск…»)
+    let theme = if setting("theme").as_deref() == Some("light") { tauri::Theme::Light } else { tauri::Theme::Dark };
     WebviewWindowBuilder::new(app, label, url)
         .title(APP_NAME)
+        .theme(Some(theme))
         .min_inner_size(380.0, 480.0)
         .visible(false)
         .data_directory(webview_dir())
@@ -362,8 +381,9 @@ fn allow_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
     }
     if is_panel_url(url) {
         if label == MAIN && url.path().ends_with(UPDATE_PATH) {
-            // «Обновить программу» в окне обновления панели
-            updater::check(app, true);
+            // «Обновить программу» в окне обновления панели (после выхода из события WebView2)
+            let app_ = app.clone();
+            let _ = app.run_on_main_thread(move || updater::check(&app_, true));
             return false;
         }
         return true;
@@ -377,7 +397,8 @@ fn allow_navigation(app: &AppHandle, label: &str, url: &Url) -> bool {
 fn open_url(app: &AppHandle, url: &Url, popup: bool) {
     if is_panel_url(url) {
         if popup {
-            open_viewer(app, url);
+            let url = url.clone();
+            in_background(app, move |app| open_viewer(app, &url));
         }
         return;
     }
@@ -390,7 +411,7 @@ fn open_viewer(app: &AppHandle, url: &Url) {
     // панель встроенного бота (<панель>/bots/<имя>/) — одно окно на бота: повторно поднимаем открытое
     let base_path = base().map(|b| b.path().trim_end_matches('/').to_string()).unwrap_or_default();
     let rest = url.path().strip_prefix(&base_path).unwrap_or("");
-    let bot = rest.strip_prefix("/bots/").and_then(|r| r.split('/').next()).filter(|b| !b.is_empty() && rest.matches('/').count() >= 3);
+    let bot = rest.strip_prefix("/bots/").and_then(|r| r.split('/').next()).filter(|b| !b.is_empty());
     let label = match bot {
         Some(bot) => {
             let label = format!("bot-{}", bot.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>());
@@ -561,7 +582,7 @@ pub fn on_navigation_completed(app: &AppHandle, source: &str, ok: bool, status: 
         return;
     }
     ui(|u| u.status = false);
-    set_active(app);
+    update_active(app, true);
     if let Some(banner) = ui(|u| u.banner.clone()) {
         eval_main(app, &format!("window.__tgDesktopBanner({banner})"));
     }
@@ -584,6 +605,15 @@ pub fn on_page_message(app: &AppHandle, label: &str, source: &str, msg: &Value) 
             notify(app, title, msg["body"].as_str().unwrap_or_default());
             if let Some(w) = app.get_webview_window(MAIN) {
                 let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
+            }
+        }
+        "theme" if from_panel => {
+            let dark = msg["theme"] != "light";
+            if let Some(w) = app.get_webview_window(label) {
+                let _ = w.set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light }));
+            }
+            if label == MAIN && setting("theme").as_deref() != Some(if dark { "dark" } else { "light" }) {
+                set_setting("theme", if dark { "dark" } else { "light" });
             }
         }
         "js-error" if from_panel => log::warn!("js: {}", msg["text"].as_str().unwrap_or_default()),
@@ -668,9 +698,16 @@ pub fn toggle_main(app: &AppHandle) {
 
 /// Для страницы окно «активно», только если оно на виду и в фокусе (уведомления — когда не активно).
 fn set_active(app: &AppHandle) {
+    update_active(app, false);
+}
+
+/// force — после загрузки страницы: новая страница не знает прежнего значения.
+fn update_active(app: &AppHandle, force: bool) {
     let Some(window) = app.get_webview_window(MAIN) else { return };
     let active = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) && window.is_focused().unwrap_or(false);
-    let _ = window.eval(format!("window.__tgDesktopActive = {active};"));
+    if ui(|u| std::mem::replace(&mut u.active, Some(active))) != Some(active) || force {
+        let _ = window.eval(format!("window.__tgDesktopActive = {active};"));
+    }
 }
 
 fn save_placement(window: &WebviewWindow) {
@@ -698,7 +735,11 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
             connect_cancel(app);
         }
         WindowEvent::Focused(focused) if label == MAIN => {
-            if !focused {
+            if *focused {
+                if let Some(w) = app.get_webview_window(MAIN) {
+                    webview::focus(&w);
+                }
+            } else {
                 ui(|u| u.last_blur = Some(Instant::now()));
             }
             set_active(app);
@@ -847,8 +888,15 @@ pub fn ask_custom(app: &AppHandle, text: &str, yes: &str, no: &str) -> bool {
     }
 }
 
+/// Последняя папка «Сохранить как», иначе «Загрузки» пользователя.
 pub fn download_dir() -> Option<PathBuf> {
-    setting("download_dir").map(PathBuf::from).filter(|p| p.is_dir())
+    setting("download_dir").map(PathBuf::from).filter(|p| p.is_dir()).or_else(|| {
+        use windows::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+        let path = unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, None).ok()? };
+        let dir = PathBuf::from(unsafe { path.to_string().ok()? });
+        unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(path.0 as _)) };
+        dir.is_dir().then_some(dir)
+    })
 }
 
 pub fn set_download_dir(path: &Path) {
@@ -919,7 +967,7 @@ fn after_update_notice(app: &AppHandle) {
     // прежняя версия: из --updated-from, из last_version или программа на PyQt5 (настройки есть, last_version нет)
     let upgraded = shell().updated_from.is_some()
         || last.as_deref().is_some_and(|l| paths::newer(VERSION, l))
-        || (last.is_none() && setting("mode").is_some() && ui(|u| !u.first_connect));
+        || (last.is_none() && shell().was_configured);
     if !upgraded {
         return;
     }
@@ -954,6 +1002,10 @@ fn short_notes(md: &str) -> String {
 // ---------- подключение ----------
 
 pub fn open_connect(app: &AppHandle, first: bool) {
+    in_background(app, move |app| open_connect_window(app, first));
+}
+
+fn open_connect_window(app: &AppHandle, first: bool) {
     if let Some(w) = app.get_webview_window(CONNECT) {
         let _ = w.show();
         let _ = w.set_focus();
@@ -1000,6 +1052,7 @@ fn connect_submit(app: &AppHandle, msg: &Value) {
     let app = app.clone();
     std::thread::spawn(move || {
         let problem = connection::check_server(&url);
+        log::info!("Проверка адреса {url}: {}", problem.as_deref().unwrap_or("TG Panel отвечает"));
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || match problem {
             Some(problem) => connect_reply(&app2, &format!("{url}: {problem}"), &url),
@@ -1069,10 +1122,10 @@ pub fn quit(app: &AppHandle, after: After) {
     }
     let stop_started = helper::now_ms();
     let hidden = !main_visible();
+    // страницу не уводим: WebSocket закроет сам сервер (код 1012). Если закрывать его со стороны страницы
+    // одновременно с остановкой, uvicorn падает на полузакрытом соединении и не отключает аккаунты
     if let Some(window) = app.get_webview_window(MAIN) {
         save_placement(&window);
-        // закрыть WebSocket страницы, иначе сервер ждёт его до таймаута
-        let _ = window.navigate("about:blank".parse().unwrap());
     }
     for (_, window) in app.webview_windows() {
         let _ = window.hide();

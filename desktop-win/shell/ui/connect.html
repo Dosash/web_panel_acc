@@ -58,7 +58,7 @@
   const C = __CONNECT__;
   const $ = id => document.getElementById(id);
   const radios = [...document.querySelectorAll("input[name=mode]")];
-  const post = msg => window.chrome.webview.postMessage(Object.assign({ tgDesktop: true }, msg));
+  const post = msg => window.chrome.webview.postMessage("tg-desktop:" + JSON.stringify(msg));
   const mode = () => radios.find(r => r.checked)?.value || "local";
   const sync = () => {
     $("url").disabled = mode() !== "remote";

@@ -28,6 +28,8 @@ $env:PYTHONUTF8 = "1"
 
 function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 function Run([string]$exe, [string[]]$arguments) {
+    # Windows PowerShell 5.1 превращает вывод программ в stderr в ошибки — судим только по коду выхода
+    $ErrorActionPreference = "Continue"
     & $exe @arguments
     if ($LASTEXITCODE -ne 0) { throw "$exe $($arguments -join ' ') — код $LASTEXITCODE" }
 }
@@ -97,7 +99,9 @@ Write-Host "Qt в сборке: $($qt -join ', ')"
 Step "Оболочка (cargo tauri build)"
 Push-Location "$Here\shell"
 try {
-    $config = '{"version":"' + $Version + '"}'
+    # версия — в сведения о файле exe; файлом: кавычки JSON в аргументах PowerShell 5.1 теряет
+    $config = "$Build\tauri.version.json"
+    [IO.File]::WriteAllText($config, '{"version":"' + $Version + '"}', (New-Object Text.UTF8Encoding $false))
     # без бандлеров Tauri: установщик делает Inno Setup
     Run cargo @("tauri", "build", "--no-bundle", "--ci", "--config", $config)
 } finally { Pop-Location }

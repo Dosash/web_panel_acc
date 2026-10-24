@@ -40,7 +40,7 @@
     const b = document.createElement("button");
     b.textContent = label;
     if (primary) b.className = "primary";
-    b.onclick = () => window.chrome.webview.postMessage({ tgDesktop: true, type: "status", action });
+    b.onclick = () => window.chrome.webview.postMessage("tg-desktop:" + JSON.stringify({ type: "status", action }));
     document.getElementById("actions").appendChild(b);
   }
   document.addEventListener("contextmenu", e => e.preventDefault());

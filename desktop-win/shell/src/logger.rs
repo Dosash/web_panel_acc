@@ -22,7 +22,7 @@ pub fn init(data: &Path) -> PathBuf {
     let path = dir.join("tg-panel.log");
     let _ = LOG.set(FileLog { path: path.clone(), file: Mutex::new(None) });
     let _ = log::set_logger(&Logger);
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
     path
 }
 

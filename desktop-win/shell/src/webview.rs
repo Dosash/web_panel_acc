@@ -36,6 +36,8 @@ impl<T> MainThread<T> {
     }
 }
 
+const MESSAGE_PREFIX: &str = "tg-desktop:";
+
 /// Пункты стандартного меню, которых у программы быть не должно: у неё нет вкладок и истории.
 const HIDDEN_MENU_ITEMS: &[&str] = &[
     "back", "forward", "saveAs", "print", "viewPageSource", "inspectElement", "createQrCode", "share",
@@ -79,10 +81,12 @@ unsafe fn attach_handlers(app: AppHandle, label: String, kind: Kind, controller:
                 let repeat = status.WasKeyDown.as_bool();
                 let down = |k: u16| GetKeyState(k as i32) < 0;
                 let (ctrl, shift, alt) = (down(VK_CONTROL.0), down(VK_SHIFT.0), down(VK_MENU.0));
+                log::debug!("клавиша {vk:#x} ctrl={ctrl} shift={shift} alt={alt} повтор={repeat}");
                 if let Some(action) = key_action(kind, vk, ctrl, shift, alt) {
                     args.SetHandled(true)?;
                     if !repeat || matches!(action, app::Key::ZoomIn | app::Key::ZoomOut) {
-                        app::on_key(&app, &label, action);
+                        let (app_, label) = (app.clone(), label.clone());
+                        let _ = app.run_on_main_thread(move || app::on_key(&app_, &label, action));
                     }
                 }
                 Ok(())
@@ -313,7 +317,8 @@ unsafe fn attach_handlers(app: AppHandle, label: String, kind: Kind, controller:
                 if (factor - want).abs() > 0.001 {
                     let _ = controller_.SetZoomFactor(want);
                 }
-                app::on_navigation_completed(&app_, &source, ok.as_bool() || cancelled, status.0, http);
+                let (app, ok, status) = (app_.clone(), ok.as_bool() || cancelled, status.0);
+                let _ = app_.run_on_main_thread(move || app::on_navigation_completed(&app, &source, ok, status, http));
                 Ok(())
             })),
             &mut token,
@@ -323,8 +328,9 @@ unsafe fn attach_handlers(app: AppHandle, label: String, kind: Kind, controller:
     attach_messages(&app, &label, &webview)
 }
 
-/// Сообщения страницы: window.chrome.webview.postMessage({tgDesktop: true, type, …}) — из page.js, экранов
-/// оболочки и окна подключения. wry слушает только строки (свой IPC) — объекты он пропускает.
+/// Сообщения страницы: window.chrome.webview.postMessage("tg-desktop:" + JSON) — из page.js, экранов оболочки
+/// и окна подключения. Только строки: обработчик IPC wry на объекте возвращает ошибку, и WebView2 не зовёт
+/// следующие обработчики (наш). Строку без формата Tauri его IPC пропускает, написав ошибку в консоль страницы.
 unsafe fn attach_messages(app: &AppHandle, label: &str, webview: &ICoreWebView2) -> windows::core::Result<()> {
     let (app, label) = (app.clone(), label.to_string());
     let mut token = 0i64;
@@ -337,10 +343,11 @@ unsafe fn attach_messages(app: &AppHandle, label: &str, webview: &ICoreWebView2)
             let mut json = PWSTR::null();
             args.WebMessageAsJson(&mut json)?;
             let json = take(json);
-            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&json) {
-                if msg.get("tgDesktop").and_then(|v| v.as_bool()) == Some(true) {
-                    app::on_page_message(&app, &label, &source, &msg);
-                }
+            let text = serde_json::from_str::<String>(&json).unwrap_or_default();
+            if let Some(msg) = text.strip_prefix(MESSAGE_PREFIX).and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok()) {
+                // после выхода из обработчика: создавать и закрывать окна WebView2 внутри его события нельзя
+                let (app_, label) = (app.clone(), label.clone());
+                let _ = app.run_on_main_thread(move || app::on_page_message(&app_, &label, &source, &msg));
             }
             Ok(())
         })),
@@ -449,6 +456,13 @@ pub fn post(window: &WebviewWindow, msg: &serde_json::Value) {
         if let Ok(webview) = pw.controller().CoreWebView2() {
             let _ = webview.PostWebMessageAsJson(&HSTRING::from(json));
         }
+    });
+}
+
+/// Фокус клавиатуры — в страницу: иначе после Alt+Tab или щелчка по трею клавиши (F5, Ctrl+Q…) уходят окну.
+pub fn focus(window: &WebviewWindow) {
+    let _ = window.with_webview(|pw| unsafe {
+        let _ = pw.controller().MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     });
 }
 

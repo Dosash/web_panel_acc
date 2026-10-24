@@ -9,7 +9,8 @@
   const APP = __TG_APP__;
   window.TG_DESKTOP = true;
   window.TG_DESKTOP_APP = { version: APP.version, mode: APP.mode, update: true };
-  const post = msg => { try { window.chrome.webview.postMessage(Object.assign({ tgDesktop: true }, msg)); } catch (e) { /* не WebView2 */ } };
+  // строкой с префиксом — объекты оболочка не получает (см. webview.rs, attach_messages)
+  const post = msg => { try { window.chrome.webview.postMessage("tg-desktop:" + JSON.stringify(msg)); } catch (e) { /* не WebView2 */ } };
 
   const real = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
   Object.defineProperty(document, "visibilityState", {
@@ -47,6 +48,18 @@
   window.addEventListener("unhandledrejection", e => report(`unhandledrejection: ${e.reason?.stack || e.reason}`));
 
   const ready = fn => (document.body ? fn() : document.addEventListener("DOMContentLoaded", fn, { once: true }));
+
+  // тема панели (data-theme на <html>) — и заголовку окна: тёмная панель без светлой полосы сверху
+  let theme = null;
+  const sendTheme = () => {
+    const t = document.documentElement.getAttribute("data-theme");
+    if ((t === "dark" || t === "light") && t !== theme) { theme = t; post({ type: "theme", theme: t }); }
+  };
+  // <html> появляется только при разборе страницы — скрипт выполняется раньше
+  ready(() => {
+    sendTheme();
+    new MutationObserver(sendTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  });
   if (APP.hideLogout) {
     const style = () => {
       const s = document.createElement("style");
