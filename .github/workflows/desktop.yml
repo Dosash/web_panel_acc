@@ -167,6 +167,10 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           cd release
+          # артефакт из нескольких путей (desktop/release, desktop-win/release) хранит их вложенными — в одну папку
+          find . -mindepth 2 -type f -name 'TG-Panel-*' -exec mv -t . {} +
+          find . -mindepth 1 -type d -empty -delete
+          ls -la
           sha256sum TG-Panel-* > "TG-Panel-$VERSION-SHA256SUMS.txt"
           cat "TG-Panel-$VERSION-SHA256SUMS.txt"
       - uses: softprops/action-gh-release@v2
