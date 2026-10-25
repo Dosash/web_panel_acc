@@ -19,6 +19,9 @@ uv run --with playwright python docs/video/src/render.py --out docs/video/demo.m
 ffmpeg -i docs/video/demo.mp4 -vf "fps=15,scale=800:-1:flags=lanczos" -c:v libwebp_anim -loop 0 -quality 60 -an docs/video/demo.webp
 ```
 
+Chromium ищется в `/usr/bin/chromium`, иначе берётся установленный Google Chrome; другой путь — `--chromium`,
+ffmpeg не из `PATH` — `--ffmpeg` (подойдёт, например, бинарник из пакета `imageio-ffmpeg`).
+
 ## Идея и раскадровка
 
 Нить: **пять окон Telegram сворачиваются в одну панель, и всё дальнейшее происходит в ней** — камера ни разу не

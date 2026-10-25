@@ -5,7 +5,8 @@
     uv run --with playwright python render.py --frames shots --times 1,5,12   # отдельные кадры в PNG
     uv run --with playwright python render.py --step 4 --out draft.mp4 # черновик 15 fps
 
-Нужны: /usr/bin/chromium (или --chromium), ffmpeg. Полный рендер — около 10 минут.
+Нужны Chromium (/usr/bin/chromium, иначе установленный Google Chrome; или --chromium) и ffmpeg (или --ffmpeg).
+Полный рендер — около 10 минут.
 Результат кладётся в docs/video/demo.mp4; app.css и icons.js копируются из static/ при каждом запуске.
 """
 import argparse
@@ -17,6 +18,7 @@ import shutil
 import socketserver
 import subprocess
 import sys
+import threading
 import time
 
 from playwright.sync_api import sync_playwright
@@ -40,12 +42,13 @@ def serve():
         def log_message(self, *a):
             pass
     httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=HERE))
-    import threading
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd.server_address[1]
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):  # консоль Windows по умолчанию не в UTF-8
+        stream.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="demo.mp4")
     ap.add_argument("--fps", type=int, default=60)
@@ -57,12 +60,15 @@ def main():
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--audio-only", action="store_true")
     ap.add_argument("--crf", type=int, default=18)
-    ap.add_argument("--chromium", default="/usr/bin/chromium")
+    ap.add_argument("--chromium", help="путь к Chromium; по умолчанию /usr/bin/chromium, а если его нет — Google Chrome")
+    ap.add_argument("--ffmpeg", default="ffmpeg")
     a = ap.parse_args()
     prepare()
     port = serve()
     with sync_playwright() as p:
-        browser = p.chromium.launch(executable_path=a.chromium, args=["--no-sandbox", "--font-render-hinting=none", "--hide-scrollbars"])
+        exe = a.chromium or ("/usr/bin/chromium" if os.path.exists("/usr/bin/chromium") else None)
+        browser = p.chromium.launch(executable_path=exe, channel=None if exe else "chrome",
+                                    args=["--no-sandbox", "--font-render-hinting=none", "--hide-scrollbars"])
         page = browser.new_context(viewport={"width": 1920, "height": 1080}, device_scale_factor=1).new_page()
         page.on("console", lambda m: print("[page]", m.type, m.text, file=sys.stderr) if m.type in ("error", "warning") else None)
         page.on("pageerror", lambda e: print("[pageerror]", e, file=sys.stderr))
@@ -93,7 +99,7 @@ def main():
         if a.frames:
             os.makedirs(a.frames, exist_ok=True)
         else:
-            cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", f"{a.fps}/{a.step}", "-i", "-"]
+            cmd = [a.ffmpeg, "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", f"{a.fps}/{a.step}", "-i", "-"]
             if not a.no_audio:
                 cmd += ["-ss", str(a.start), "-i", audio_path]
             cmd += ["-map", "0:v"] + ([] if a.no_audio else ["-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"])

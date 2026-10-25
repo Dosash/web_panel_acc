@@ -206,7 +206,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   gap: 10px; padding: 14px 0; overflow-y: auto; overflow-x: visible; scrollbar-width: none;
 }
 .rail-sep { width: 28px; height: 1px; background: var(--border-strong); margin: 2px 0; flex: none; }
-.rail-accounts { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+/* кольцо аватарки (box-shadow 4px) не занимает места в потоке — отступы с запасом, чтобы кольца не слипались */
+.rail-accounts { display: flex; flex-direction: column; gap: 18px; align-items: center; margin: 4px 0; flex: none; }
 .rail-spacer { flex: 1; }
 .rail-item {
   width: 48px; height: 48px; border-radius: 16px; border: 0; cursor: pointer; padding: 0; flex: none;
@@ -1038,6 +1039,7 @@ kbd { font: 11.5px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; b
 @media (max-width: 860px) {
   .app { grid-template-columns: 64px minmax(0, 1fr); }
   .rail { gap: 8px; padding: 10px 0; }
+  .rail-accounts { gap: 16px; }
   .rail-item, .rail-item .avatar { width: 44px; height: 44px; }
   .rail-item::before { display: none; }
   .brand-mark { width: 36px; height: 36px; }
